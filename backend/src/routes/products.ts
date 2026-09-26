@@ -1,0 +1,6 @@
+import { Router } from 'express';
+import { supabaseAdmin } from '../utils/supabase';
+const router = Router();
+router.get('/', async (req, res) => { const q = supabaseAdmin.from('proxy_products').select('id,name,description,protocol,country_code,country_name,city,ip_type,price_daily,price_weekly,price_monthly,device_limit,stock_available,is_featured,category,tags').eq('is_active', true); if (req.query.country) q.eq('country_code', String(req.query.country).toUpperCase()); if (req.query.protocol) q.eq('protocol', String(req.query.protocol)); if (req.query.featured === 'true') q.eq('is_featured', true); const { data, error } = await q.order('is_featured', { ascending: false }).order('created_at', { ascending: false }); if (error) return res.status(500).json({ error: { code: 'PRODUCTS_UNAVAILABLE', message: 'Could not load products' } }); return res.json({ data: data ?? [] }); });
+router.get('/:id', async (req, res) => { const { data, error } = await supabaseAdmin.from('proxy_products').select('*').eq('id', req.params.id).eq('is_active', true).maybeSingle(); if (error) return res.status(500).json({ error: { code: 'PRODUCT_UNAVAILABLE', message: 'Could not load product' } }); if (!data) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Product not found' } }); return res.json({ data }); });
+export default router;
