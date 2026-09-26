@@ -15,11 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Verify liveness
-        run: curl --fail --silent --show-error https://proxy-production-58ff.up.railway.app/livez
+        run: curl --fail --silent --show-error https://uyguhj-production.up.railway.app/livez
       - name: Verify readiness
-        run: curl --fail --silent --show-error https://proxy-production-58ff.up.railway.app/readyz
+        run: curl --fail --silent --show-error https://uyguhj-production.up.railway.app/readyz
       - name: Verify products contract
-        run: curl --fail --silent --show-error https://proxy-production-58ff.up.railway.app/api/v1/products
+        run: curl --fail --silent --show-error https://uyguhj-production.up.railway.app/api/v1/products
 
   backend:
     name: Backend quality gates
@@ -60,7 +60,7 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
       - name: Configure API endpoint
-        run: echo "API_BASE_URL=${{ vars.API_BASE_URL || 'https://proxy-production-58ff.up.railway.app/api/v1' }}" >> gradle.properties
+        run: echo "API_BASE_URL=${{ vars.API_BASE_URL || 'https://uyguhj-production.up.railway.app/api/v1' }}" >> gradle.properties
       - run: chmod +x gradlew
       - run: ./gradlew lintDebug testDebugUnitTest assembleDebug --no-daemon
       - name: Upload debug APK
