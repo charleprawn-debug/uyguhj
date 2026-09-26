@@ -120,17 +120,28 @@ private class SessionStore(context: Context) {
 }
 
 private class ApiClient(context: Context) {
-    private val store = SessionStore(context)
+    private val appContext = context.applicationContext
+    private val store = SessionStore(appContext)
     private val client = OkHttpClient()
     private val jsonType = "application/json".toMediaType()
     private fun request(path: String, method: String = "GET", body: JSONObject? = null): JSONObject {
+        AdvancedOperationLog.info(appContext, "HTTP $method $path — بيانات الاعتماد ومتن الطلب لا تُسجّل.")
         val builder = Request.Builder().url(BuildConfig.API_BASE_URL.trimEnd('/') + path).header("Accept", "application/json")
         store.accessToken?.let { builder.header("Authorization", "Bearer " + it) }
         if (body != null) builder.method(method, body.toString().toRequestBody(jsonType)) else builder.method(method, null)
-        client.newCall(builder.build()).execute().use { response ->
-            val raw = response.body?.string().orEmpty(); val result = if (raw.isBlank()) JSONObject() else JSONObject(raw)
-            if (!response.isSuccessful) throw IllegalStateException(result.optJSONObject("error")?.optString("message") ?: "فشل الطلب (" + response.code + ")")
-            return result
+        return try {
+            client.newCall(builder.build()).execute().use { response ->
+                AdvancedOperationLog.info(appContext, "HTTP $method $path -> ${response.code}.")
+                val raw = response.body?.string().orEmpty(); val result = if (raw.isBlank()) JSONObject() else JSONObject(raw)
+                if (!response.isSuccessful) {
+                    AdvancedOperationLog.error(appContext, "HTTP request failed with status ${response.code}.")
+                    throw IllegalStateException(result.optJSONObject("error")?.optString("message") ?: "فشل الطلب (" + response.code + ")")
+                }
+                result
+            }
+        } catch (failure: Exception) {
+            AdvancedOperationLog.error(appContext, "HTTP $method $path exception: ${failure.javaClass.simpleName}.")
+            throw failure
         }
     }
     fun login(email: String, password: String) { val d = request("/auth/login", "POST", JSONObject().put("email", email.trim()).put("password", password)).getJSONObject("data"); store.accessToken = d.getString("accessToken"); store.refreshToken = d.optString("refreshToken") }
@@ -173,7 +184,8 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable private fun MainShell(vm: AppViewModel) {
-    var screen by remember { mutableStateOf(Screen.MARKET) }; var selectedProduct by remember { mutableStateOf<Product?>(null) }; if (selectedProduct != null) { ProductDetails(selectedProduct!!, { selectedProduct = null }); return }; LaunchedEffect(screen) { vm.clearError(); when (screen) { Screen.MARKET -> vm.loadProducts(); Screen.PROFILE -> vm.loadProfile(); Screen.SUBSCRIPTIONS -> vm.loadSubscriptions(); Screen.PROXY -> Unit } }
+    val context = LocalContext.current
+    var screen by remember { mutableStateOf(Screen.MARKET) }; var selectedProduct by remember { mutableStateOf<Product?>(null) }; if (selectedProduct != null) { ProductDetails(selectedProduct!!, { selectedProduct = null }); return }; LaunchedEffect(screen) { AdvancedOperationLog.info(context, "App navigation: ${screen.name}."); vm.clearError(); when (screen) { Screen.MARKET -> vm.loadProducts(); Screen.PROFILE -> vm.loadProfile(); Screen.SUBSCRIPTIONS -> vm.loadSubscriptions(); Screen.PROXY -> Unit } }
     val title = when (screen) { Screen.MARKET -> "السوق"; Screen.SUBSCRIPTIONS -> "اشتراكاتي"; Screen.PROXY -> "بروكسي الجهاز"; Screen.PROFILE -> "ملفي الشخصي" }
     Scaffold(topBar = { TopAppBar(title = { Text(title, fontWeight = FontWeight.Bold) }) }, bottomBar = { NavigationBar { NavigationBarItem(screen == Screen.MARKET, { screen = Screen.MARKET }, icon = { Text("⌂") }, label = { Text("السوق") }); NavigationBarItem(screen == Screen.SUBSCRIPTIONS, { screen = Screen.SUBSCRIPTIONS }, icon = { Text("▣") }, label = { Text("الخطط") }); NavigationBarItem(screen == Screen.PROXY, { screen = Screen.PROXY }, icon = { Text("⚡") }, label = { Text("البروكسي") }); NavigationBarItem(screen == Screen.PROFILE, { screen = Screen.PROFILE }, icon = { Text("●") }, label = { Text("الملف الشخصي") }) } }) { padding -> when (screen) { Screen.MARKET -> Marketplace(vm, padding) { selectedProduct = it }; Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding); Screen.PROXY -> ProxyScreen(padding); Screen.PROFILE -> ProfileScreen(vm, padding) } }
 }
@@ -218,6 +230,7 @@ class MainActivity : ComponentActivity() {
     }
     var operationLog by remember { mutableStateOf(emptyList<String>()) }
     var logCopied by remember { mutableStateOf(false) }
+    var exportStatus by remember { mutableStateOf<String?>(null) }
 
     fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
@@ -270,6 +283,23 @@ class MainActivity : ComponentActivity() {
     // Wireless debugging state is rendered in the advanced setup card below.
 
     val coroutineScope = rememberCoroutineScope()
+    val exportLogLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/plain")
+    ) { destination ->
+        if (destination == null) {
+            exportStatus = "أُلغي اختيار مكان الحفظ."
+        } else {
+            coroutineScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    AdvancedOperationLog.export(context, destination)
+                }
+                exportStatus = result.fold(
+                    onSuccess = { "تم حفظ السجل الكامل ($it بايت)." },
+                    onFailure = { "تعذر حفظ السجل: ${it.message ?: "خطأ غير معروف"}" }
+                )
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         if (!ProxyLocalService.isRunning(context) && AdvancedSystemProxy.hasPendingRestore(context)) {
@@ -292,9 +322,9 @@ class MainActivity : ComponentActivity() {
     }
 
     LaunchedEffect(mode) {
-        if (mode == "advanced") {
-            operationLog = withContext(Dispatchers.IO) { AdvancedOperationLog.readLines(context) }
-            while (true) {
+        operationLog = withContext(Dispatchers.IO) { AdvancedOperationLog.readLines(context) }
+        while (true) {
+            if (mode == "advanced") {
                 val newWirelessState = withContext(Dispatchers.IO) {
                     WirelessDebuggingManager.checkState(context)
                 }
@@ -302,13 +332,13 @@ class MainActivity : ComponentActivity() {
                     AdvancedOperationLog.info(context, "حالة Wireless ADB: ${newWirelessState.name}.")
                     wirelessState = newWirelessState
                 }
-                val newLog = withContext(Dispatchers.IO) { AdvancedOperationLog.readLines(context) }
-                if (newLog != operationLog) {
-                    operationLog = newLog
-                    logCopied = false
-                }
-                delay(1_000)
             }
+            val newLog = withContext(Dispatchers.IO) { AdvancedOperationLog.readLines(context) }
+            if (newLog != operationLog) {
+                operationLog = newLog
+                logCopied = false
+            }
+            delay(1_000)
         }
     }
 
@@ -693,10 +723,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        if (mode == "advanced") item {
+        item {
             AdvancedOperationLogPanel(
                 lines = operationLog,
                 copied = logCopied,
+                exportStatus = exportStatus,
+                exportPath = AdvancedOperationLog.adbPullPath(context),
                 onCopy = {
                     coroutineScope.launch {
                         val completeLog = withContext(Dispatchers.IO) {
@@ -707,11 +739,10 @@ class MainActivity : ComponentActivity() {
                         logCopied = true
                     }
                 },
-                onClear = {
-                    AdvancedOperationLog.clear(context)
-                    AdvancedOperationLog.info(context, "مُسح السجل يدويًا؛ يبدأ التسجيل من هذه النقطة.")
-                    operationLog = emptyList()
-                    logCopied = false
+                onExport = {
+                    AdvancedOperationLog.info(context, "طلب المستخدم حفظ نسخة من السجل الكامل عبر منتقي الملفات.")
+                    exportStatus = "اختر مكان الحفظ…"
+                    exportLogLauncher.launch("advanced-operation-${System.currentTimeMillis()}.log")
                 }
             )
         }

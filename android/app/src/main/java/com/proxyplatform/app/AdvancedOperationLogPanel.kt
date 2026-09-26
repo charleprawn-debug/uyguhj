@@ -30,8 +30,10 @@ import androidx.compose.ui.unit.dp
 internal fun AdvancedOperationLogPanel(
     lines: List<String>,
     copied: Boolean,
+    exportStatus: String?,
+    exportPath: String?,
     onCopy: () -> Unit,
-    onClear: () -> Unit,
+    onExport: () -> Unit,
 ) {
     val listState = rememberLazyListState()
     LaunchedEffect(lines.size) {
@@ -56,9 +58,6 @@ internal fun AdvancedOperationLogPanel(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                }
-                TextButton(onClick = onCopy, enabled = lines.isNotEmpty()) {
-                    Text(if (copied) "تم النسخ" else "نسخ السجل")
                 }
             }
 
@@ -86,7 +85,7 @@ internal fun AdvancedOperationLogPanel(
                             Text(
                                 line,
                                 color = when {
-                                    "[ERR]" in line -> Color(0xFFFF7777)
+                                    "[FATAL]" in line || "[ERR]" in line || "[TRACE]" in line || "[EXIT_TRACE]" in line -> Color(0xFFFF7777)
                                     "[CMD]" in line -> Color(0xFF75C7FF)
                                     "[OUT]" in line -> Color(0xFF8CE99A)
                                     else -> Color(0xFFD2D9D5)
@@ -99,11 +98,23 @@ internal fun AdvancedOperationLogPanel(
                 }
             }
 
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(onClick = onClear, enabled = lines.isNotEmpty()) { Text("مسح السجل") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                TextButton(onClick = onCopy, enabled = lines.isNotEmpty()) {
+                    Text(if (copied) "تم النسخ" else "نسخ")
+                }
+                TextButton(onClick = onExport, enabled = lines.isNotEmpty()) { Text("حفظ كملف") }
+            }
+            exportStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary) }
+            exportPath?.let { path ->
+                Text(
+                    "سحب مباشر من الكمبيوتر: adb pull \"$path\"",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = Color(0xFF75C7FF)
+                )
             }
             Text(
-                "يُحفظ السجل محليًا؛ قد يظهر عنوان البروكسي. عند تجاوز 2 MB يُختصر إلى آخر 5,000 سطر، ولا تُسجّل رموز الاقتران أو كلمات المرور.",
+                "يُسجّل التطبيق منذ بدء التشغيل؛ يظهر التقرير في المرة التالية بعد الإغلاق غير المتوقع. قد يظهر عنوان البروكسي، لكن رموز الاقتران وكلمات المرور لا تُسجّل.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
