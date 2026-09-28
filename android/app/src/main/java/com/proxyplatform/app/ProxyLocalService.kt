@@ -219,7 +219,9 @@ class ProxyLocalService : Service(), CommandServerHandler {
     override fun serviceStop() = stopTunnel()
     override fun setSystemProxyEnabled(isEnabled: Boolean) = Unit
     override fun triggerNativeCrash() = Unit
-    override fun writeDebugMessage(message: String) = Unit
+    override fun writeDebugMessage(message: String) {
+        AdvancedOperationLog.singBox(this, message)
+    }
 
     companion object {
         const val ACTION_START = "com.proxyplatform.app.action.START_PROXY"
