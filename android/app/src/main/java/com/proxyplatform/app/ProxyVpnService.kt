@@ -36,11 +36,13 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
 
     override fun onCreate() {
         super.onCreate()
+        AdvancedOperationLog.info(this, "إنشاء خدمة VPN.")
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            AdvancedOperationLog.info(this, "استلمت خدمة VPN طلب إيقاف.")
             stopTunnel(clearError = true)
             return START_NOT_STICKY
         }
@@ -53,14 +55,17 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
         val password = intent?.getStringExtra(EXTRA_PASSWORD).orEmpty()
 
         if (host.isBlank() || port !in 1..65535 || protocol !in setOf("http", "socks", "socks5")) {
+            AdvancedOperationLog.error(this, "بيانات upstream لنفق VPN غير صالحة؛ لا تُسجّل بيانات الاعتماد.")
             recordError("أدخل مضيف البروكسي والمنفذ والبروتوكول بشكل صحيح.")
             stopSelf()
             return START_NOT_STICKY
         }
 
         return try {
+            AdvancedOperationLog.info(this, "بدء نفق VPN: protocol=${protocol.uppercase()}, endpoint=$host:$port, authentication=${username.isNotBlank()}.")
             startForegroundCompat("جارٍ تجهيز نفق VPN")
             if (!setupReady) {
+                AdvancedOperationLog.info(this, "تهيئة محرك sing-box لوضع VPN.")
                 setupLibbox()
                 setupReady = true
             }
@@ -75,8 +80,10 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
                 .apply()
             getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, notification("نفق VPN نشط"))
+            AdvancedOperationLog.output(this, "اكتمل تشغيل نفق VPN بنجاح.")
             START_STICKY
         } catch (error: Exception) {
+            AdvancedOperationLog.error(this, "فشل تشغيل نفق VPN: ${error.javaClass.simpleName}: ${error.message ?: "بلا تفاصيل"}")
             recordError("تعذر تشغيل نفق VPN: ${error.message ?: "تحقق من بيانات البروكسي"}")
             stopTunnel()
             START_NOT_STICKY
@@ -85,11 +92,13 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
 
     override fun onRevoke() {
         // The user revoked VPN access from system settings (or another VPN app took over).
+        AdvancedOperationLog.error(this, "ألغى Android إذن VPN أو استحوذ تطبيق VPN آخر على الاتصال.")
         stopTunnel(clearError = true)
         super.onRevoke()
     }
 
     override fun onDestroy() {
+        AdvancedOperationLog.info(this, "تدمير خدمة VPN.")
         stopTunnel()
         super.onDestroy()
     }
@@ -173,6 +182,7 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
     }
 
     private fun stopTunnel(clearError: Boolean = false) {
+        AdvancedOperationLog.info(this, "إغلاق نفق VPN وخدمة sing-box.")
         runCatching { commandServer?.closeService() }
         runCatching { commandServer?.close() }
         commandServer = null
@@ -186,6 +196,7 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
     }
 
     private fun recordError(message: String) {
+        AdvancedOperationLog.error(this, message)
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putBoolean(KEY_RUNNING, false)
             .putString(KEY_ERROR, message)
@@ -230,7 +241,9 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
     override fun serviceStop() = stopTunnel()
     override fun setSystemProxyEnabled(isEnabled: Boolean) = Unit
     override fun triggerNativeCrash() = Unit
-    override fun writeDebugMessage(message: String) = Unit
+    override fun writeDebugMessage(message: String) {
+        AdvancedOperationLog.singBox(this, message)
+    }
 
     companion object {
         const val ACTION_START = "com.proxyplatform.app.action.START_VPN"
