@@ -51,7 +51,9 @@ object SingBoxConfig {
                 .put(outbound)
                 .put(JSONObject().put("type", "direct").put("tag", "direct")))
             .put("route", JSONObject()
-                .put("auto_detect_interface", true)
+                // This is the Android local-proxy mode, not a TUN. Let the
+                // OS route outbound sockets instead of selecting a TUN NIC.
+                .put("auto_detect_interface", false)
                 .put("final", "proxy"))
 
         return File(context.filesDir, CONFIG_FILE).also {
