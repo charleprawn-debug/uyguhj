@@ -43,7 +43,7 @@ class TunPlatformInterface(private val service: ProxyVpnService) : PlatformInter
         sourcePort: Int,
         destinationAddress: String,
         destinationPort: Int
-    ): ConnectionOwner? = null
+    ): ConnectionOwner = ConnectionOwnerFallback.unknown()
     override fun lookupUser(username: String): PlatformUser? = null
     override fun lookupSFTPServer(): String = ""
     override fun checkPlatformShell() = error("Platform shell is not available")
