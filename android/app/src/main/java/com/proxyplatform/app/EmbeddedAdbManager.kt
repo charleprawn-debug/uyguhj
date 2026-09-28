@@ -61,10 +61,28 @@ class EmbeddedAdbManager private constructor(private val context: Context) {
         stream.use {
             val output = ByteArrayOutputStream()
             val buffer = ByteArray(4096)
-            val input = it.openInputStream()
             var count: Int
-            while (input.read(buffer, 0, buffer.size).also { count = it } >= 0) {
-                if (count > 0) output.write(buffer, 0, count)
+            try {
+                while (it.read(buffer, 0, buffer.size).also { count = it } >= 0) {
+                    if (count > 0) output.write(buffer, 0, count)
+                }
+            } catch (closed: java.io.IOException) {
+                // libadb 3.1.1 races the final remote CLSE packet: it can throw
+                // "Stream closed" after delivering the command's last data packet.
+                // Keep any received marker/output; the caller validates that the
+                // remote shell actually finished successfully before using it.
+                if (closed.message != "Stream closed.") throw closed
+                while (true) {
+                    val pendingBytes = try {
+                        stream.read(buffer, 0, buffer.size)
+                    } catch (terminalClose: java.io.IOException) {
+                        if (terminalClose.message == "Stream closed.") break
+                        throw terminalClose
+                    }
+                    if (pendingBytes <= 0) break
+                    output.write(buffer, 0, pendingBytes)
+                }
+                Log.w("EmbeddedAdbManager", "ADB remote shell stream closed after delivering ${output.size()} bytes.")
             }
             output.toString(Charsets.UTF_8.name())
         }
