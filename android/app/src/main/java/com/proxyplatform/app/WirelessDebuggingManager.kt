@@ -101,11 +101,13 @@ object WirelessDebuggingManager {
                 AdvancedOperationLog.info(context, "جلسة ADB غير متصلة؛ بدء اتصال TLS قبل الأمر.")
                 adb.connect(EmbeddedAdbManager.DEFAULT_TIMEOUT_MS).getOrThrow()
             }
-            AdvancedOperationLog.command(context, command)
-            adb.execute(command).getOrThrow()
+            executeShellCommand(context, adb, command)
         }
         if (first.isSuccess) {
-            AdvancedOperationLog.output(context, first.getOrThrow())
+            return first
+        }
+        if (first.exceptionOrNull() is RemoteShellCommandException) {
+            AdvancedOperationLog.error(context, "رفض shell الأمر برمز خروج غير صفري؛ لن تتم إعادة إرساله.")
             return first
         }
 
@@ -117,17 +119,40 @@ object WirelessDebuggingManager {
             AdvancedOperationLog.info(context, "إعادة المحاولة مرة واحدة بعد إعادة اتصال ADB.")
             adb.close()
             adb.connect(EmbeddedAdbManager.DEFAULT_TIMEOUT_MS).getOrThrow()
-            AdvancedOperationLog.command(context, command)
-            adb.execute(command).getOrThrow()
+            executeShellCommand(context, adb, command)
         }
-        retry.onSuccess {
-            AdvancedOperationLog.output(context, it)
-        }.onFailure {
+        retry.onFailure {
             Log.e(TAG, "ADB shell command failed: $command", it)
             AdvancedOperationLog.error(context, "فشل أمر ADB بعد إعادة المحاولة: ${it.message ?: it.javaClass.simpleName}")
         }
         return retry
     }
+
+    private fun executeShellCommand(
+        context: Context,
+        adb: EmbeddedAdbManager,
+        command: String,
+    ): String {
+        val wrappedCommand = AdbShellCommand.wrap(command)
+        AdvancedOperationLog.command(context, wrappedCommand)
+        val rawResponse = adb.execute(wrappedCommand).getOrThrow()
+        val response = AdbShellCommand.parse(rawResponse)
+        AdvancedOperationLog.output(
+            context,
+            response.output.ifBlank { "<مخرجات فارغة؛ وصل رد انتهاء الأمر>" }
+        )
+        AdvancedOperationLog.info(context, "رمز خروج أمر ADB: ${response.exitCode}.")
+        if (response.exitCode != 0) {
+            throw RemoteShellCommandException(
+                response.exitCode,
+                response.output.ifBlank { "<بلا تفاصيل>" }
+            )
+        }
+        return response.output
+    }
+
+    private class RemoteShellCommandException(exitCode: Int, output: String) :
+        IllegalStateException("انتهى أمر ADB برمز $exitCode: $output")
 
     fun executeCommand(context: Context, command: String): Boolean =
         executeCommandResult(context, command).isSuccess
