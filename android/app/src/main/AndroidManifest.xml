@@ -15,6 +15,7 @@
         keep the permission ask as small as possible.
     -->
     <application
+        android:name=".ProxyPlatformApplication"
         android:allowBackup="false"
         android:label="@string/app_name"
         android:supportsRtl="true"
