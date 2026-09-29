@@ -1,3 +1,4 @@
+[Uploading ADVANCED_MODE_AUDIT.md…]()
 # مراجعة وإصلاح الوضع المتقدم
 
 **المشروع:** [`charleprawn-debug/uyguhj`](https://github.com/charleprawn-debug/uyguhj)
