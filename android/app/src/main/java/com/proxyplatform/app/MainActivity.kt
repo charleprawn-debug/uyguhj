@@ -40,7 +40,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -53,7 +56,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -97,18 +100,24 @@ private data class Profile(val email: String, val name: String, val role: String
 private data class Subscription(val status: String, val expires: String, val product: String, val protocol: String)
 private enum class Screen { MARKET, SUBSCRIPTIONS, PROXY, PROFILE }
 
-private val ProxyColors = darkColorScheme(
-    primary = Color(0xFF4A9EFF), primaryContainer = Color(0xFF1A3A6B), onPrimaryContainer = Color(0xFFD6E4FF),
-    secondary = Color(0xFF42D5C1), secondaryContainer = Color(0xFF0F4A45), onSecondaryContainer = Color(0xFF8FE8DC),
-    tertiary = Color(0xFFFFB74D), tertiaryContainer = Color(0xFF4A3300), onTertiaryContainer = Color(0xFFFFDDB3),
-    background = Color(0xFF0A1421), surface = Color(0xFF0F1D2E), surfaceVariant = Color(0xFF1A2A40), onSurfaceVariant = Color(0xFFB0BED4),
-    error = Color(0xFFEF5350), errorContainer = Color(0xFF5D1F1F), onErrorContainer = Color(0xFFFFCDD2),
-    outline = Color(0xFF3A5070)
+private val ProxyColors = lightColorScheme(
+    primary = Color(0xFF2563EB), onPrimary = Color.White,
+    primaryContainer = Color(0xFFEAF1FF), onPrimaryContainer = Color(0xFF153B8A),
+    secondary = Color(0xFF0F8B78), onSecondary = Color.White,
+    secondaryContainer = Color(0xFFE0F5F0), onSecondaryContainer = Color(0xFF075E53),
+    tertiary = Color(0xFFB66B08), onTertiary = Color.White,
+    tertiaryContainer = Color(0xFFFFF1D8), onTertiaryContainer = Color(0xFF744200),
+    background = Color(0xFFF6F8FC), onBackground = Color(0xFF18202F),
+    surface = Color.White, onSurface = Color(0xFF18202F),
+    surfaceVariant = Color(0xFFF0F3F8), onSurfaceVariant = Color(0xFF616B7C),
+    error = Color(0xFFCE3D43), onError = Color.White,
+    errorContainer = Color(0xFFFFE9E8), onErrorContainer = Color(0xFF8F1D24),
+    outline = Color(0xFFD8DEE8), outlineVariant = Color(0xFFE8ECF2),
 )
 
-private val SuccessGreen = Color(0xFF66BB6A)
-private val SuccessGreenContainer = Color(0xFF1B3D1F)
-private val OnSuccessGreenContainer = Color(0xFFC8E6C9)
+private val SuccessGreen = Color(0xFF15866F)
+private val SuccessGreenContainer = Color(0xFFE4F5EF)
+private val OnSuccessGreenContainer = Color(0xFF14624F)
 
 @Composable private fun ProxyTheme(content: @Composable () -> Unit) { MaterialTheme(colorScheme = ProxyColors, content = content) }
 
@@ -171,15 +180,25 @@ private class AppViewModel(private val api: ApiClient) : ViewModel() {
 private class AppViewModelFactory(private val api: ApiClient) : androidx.lifecycle.ViewModelProvider.Factory { override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(api) as T }
 
 class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) { super.onCreate(savedInstanceState); val api = ApiClient(this); setContent { ProxyTheme { val vm: AppViewModel = viewModel(factory = AppViewModelFactory(api)); ProxyPlatformApp(vm) } } }
+    @Suppress("DEPRECATION")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.statusBarColor = android.graphics.Color.WHITE
+        window.navigationBarColor = android.graphics.Color.WHITE
+        window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or
+            android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
+            android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        val api = ApiClient(this)
+        setContent { ProxyTheme { val vm: AppViewModel = viewModel(factory = AppViewModelFactory(api)); ProxyPlatformApp(vm) } }
+    }
 }
 
 @Composable private fun ProxyPlatformApp(vm: AppViewModel) { CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { if (vm.loggedIn) MainShell(vm) else AuthScreen(vm) } } }
-@Composable private fun BrandMark() { Box(Modifier.size(56.dp).background(Brush.linearGradient(listOf(Color(0xFF4A9EFF), Color(0xFF42D5C1))), RoundedCornerShape(18.dp)), contentAlignment = Alignment.Center) { Text("P", style = MaterialTheme.typography.headlineSmall, color = Color(0xFF0A1421), fontWeight = FontWeight.Black) } }
+@Composable private fun BrandMark() { Box(Modifier.size(56.dp).background(Brush.linearGradient(listOf(Color(0xFF4A9EFF), Color(0xFF42D5C1))), RoundedCornerShape(18.dp)), contentAlignment = Alignment.Center) { Text("P", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Black) } }
 
 @Composable private fun AuthScreen(vm: AppViewModel) {
     var register by remember { mutableStateOf(false) }; var email by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var name by remember { mutableStateOf("") }
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0B1830), Color(0xFF0A1421))))) { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.Center) { BrandMark(); Spacer(Modifier.height(20.dp)); Text("منصة البروكسي", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Spacer(Modifier.height(8.dp)); Text(if (register) "أنشئ حسابًا آمنًا وأدر اتصالات البروكسي الخاصة بك." else "طريقة أسرع وأسهل لتوجيه اتصالك.", color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(24.dp)); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) { TextButton(onClick = { register = false; vm.clearError() }) { Text("تسجيل الدخول", fontWeight = if (!register) FontWeight.Bold else FontWeight.Normal) }; TextButton(onClick = { register = true; vm.clearError() }) { Text("إنشاء حساب", fontWeight = if (register) FontWeight.Bold else FontWeight.Normal) } }; Spacer(Modifier.height(12.dp)); if (register) { OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("الاسم الكامل") }, singleLine = true); Spacer(Modifier.height(10.dp)) }; OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") }, singleLine = true); Spacer(Modifier.height(10.dp)); OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, visualTransformation = PasswordVisualTransformation(), singleLine = true); vm.error?.let { Text(it, Modifier.padding(top = 12.dp), color = if (it.startsWith("تم إنشاء الحساب")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error) }; Spacer(Modifier.height(18.dp)); Button(onClick = { if (register) vm.register(email, password, name) { register = false } else vm.login(email, password) }, enabled = !vm.loading && email.isNotBlank() && password.length >= 8 && (!register || name.isNotBlank()), modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(15.dp)) { if (vm.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text(if (register) "إنشاء حساب" else "متابعة", fontWeight = FontWeight.Bold) }; Spacer(Modifier.height(16.dp)); Text("تُستخدم بيانات اعتمادك فقط للمصادقة مع الخدمة.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) } }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.Center) { BrandMark(); Spacer(Modifier.height(20.dp)); Text("منصة البروكسي", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Spacer(Modifier.height(8.dp)); Text(if (register) "أنشئ حسابًا آمنًا وأدر اتصالات البروكسي الخاصة بك." else "طريقة أسرع وأسهل لتوجيه اتصالك.", color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(24.dp)); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) { TextButton(onClick = { register = false; vm.clearError() }) { Text("تسجيل الدخول", fontWeight = if (!register) FontWeight.Bold else FontWeight.Normal) }; TextButton(onClick = { register = true; vm.clearError() }) { Text("إنشاء حساب", fontWeight = if (register) FontWeight.Bold else FontWeight.Normal) } }; Spacer(Modifier.height(12.dp)); if (register) { OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("الاسم الكامل") }, singleLine = true); Spacer(Modifier.height(10.dp)) }; OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") }, singleLine = true); Spacer(Modifier.height(10.dp)); OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, visualTransformation = PasswordVisualTransformation(), singleLine = true); vm.error?.let { Text(it, Modifier.padding(top = 12.dp), color = if (it.startsWith("تم إنشاء الحساب")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error) }; Spacer(Modifier.height(18.dp)); Button(onClick = { if (register) vm.register(email, password, name) { register = false } else vm.login(email, password) }, enabled = !vm.loading && email.isNotBlank() && password.length >= 8 && (!register || name.isNotBlank()), modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(15.dp)) { if (vm.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text(if (register) "إنشاء حساب" else "متابعة", fontWeight = FontWeight.Bold) }; Spacer(Modifier.height(16.dp)); Text("تُستخدم بيانات اعتمادك فقط للمصادقة مع الخدمة.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) } }
 }
 
 @OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
@@ -187,7 +206,7 @@ class MainActivity : ComponentActivity() {
     val context = LocalContext.current
     var screen by remember { mutableStateOf(Screen.MARKET) }; var selectedProduct by remember { mutableStateOf<Product?>(null) }; if (selectedProduct != null) { ProductDetails(selectedProduct!!, { selectedProduct = null }); return }; LaunchedEffect(screen) { AdvancedOperationLog.info(context, "App navigation: ${screen.name}."); vm.clearError(); when (screen) { Screen.MARKET -> vm.loadProducts(); Screen.PROFILE -> vm.loadProfile(); Screen.SUBSCRIPTIONS -> vm.loadSubscriptions(); Screen.PROXY -> Unit } }
     val title = when (screen) { Screen.MARKET -> "السوق"; Screen.SUBSCRIPTIONS -> "اشتراكاتي"; Screen.PROXY -> "بروكسي الجهاز"; Screen.PROFILE -> "ملفي الشخصي" }
-    Scaffold(topBar = { TopAppBar(title = { Text(title, fontWeight = FontWeight.Bold) }) }, bottomBar = { NavigationBar { NavigationBarItem(screen == Screen.MARKET, { screen = Screen.MARKET }, icon = { Text("⌂") }, label = { Text("السوق") }); NavigationBarItem(screen == Screen.SUBSCRIPTIONS, { screen = Screen.SUBSCRIPTIONS }, icon = { Text("▣") }, label = { Text("الخطط") }); NavigationBarItem(screen == Screen.PROXY, { screen = Screen.PROXY }, icon = { Text("⚡") }, label = { Text("البروكسي") }); NavigationBarItem(screen == Screen.PROFILE, { screen = Screen.PROFILE }, icon = { Text("●") }, label = { Text("الملف الشخصي") }) } }) { padding -> when (screen) { Screen.MARKET -> Marketplace(vm, padding) { selectedProduct = it }; Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding); Screen.PROXY -> ProxyScreen(padding); Screen.PROFILE -> ProfileScreen(vm, padding) } }
+    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { TopAppBar(title = { Text(title, fontWeight = FontWeight.Bold) }) }, bottomBar = { NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) { NavigationBarItem(screen == Screen.MARKET, { screen = Screen.MARKET }, icon = { Text("⌂") }, label = { Text("السوق") }); NavigationBarItem(screen == Screen.SUBSCRIPTIONS, { screen = Screen.SUBSCRIPTIONS }, icon = { Text("▣") }, label = { Text("الخطط") }); NavigationBarItem(screen == Screen.PROXY, { screen = Screen.PROXY }, icon = { Text("⚡") }, label = { Text("البروكسي") }); NavigationBarItem(screen == Screen.PROFILE, { screen = Screen.PROFILE }, icon = { Text("●") }, label = { Text("الملف الشخصي") }) } }) { padding -> when (screen) { Screen.MARKET -> Marketplace(vm, padding) { selectedProduct = it }; Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding); Screen.PROXY -> ProxyScreen(padding); Screen.PROFILE -> ProfileScreen(vm, padding) } }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,10 +234,14 @@ class MainActivity : ComponentActivity() {
     var auth by remember { mutableStateOf(false) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    val profileStore = remember(context) { ProxyProfileStore(context.applicationContext) }
+    var savedProxies by remember { mutableStateOf(emptyList<SavedProxy>()) }
+    var selectedSavedProxyId by remember { mutableStateOf<String?>(null) }
     var running by remember {
         mutableStateOf(ProxyLocalService.isRunning(context) || ProxyVpnService.isRunning(context))
     }
     var starting by remember { mutableStateOf(false) }
+    var checkingEndpoint by remember { mutableStateOf(false) }
     var stopping by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var mockLocation by remember { mutableStateOf(false) }
@@ -283,6 +306,64 @@ class MainActivity : ComponentActivity() {
     // Wireless debugging state is rendered in the advanced setup card below.
 
     val coroutineScope = rememberCoroutineScope()
+
+    fun selectProxyProfile(profile: SavedProxy) {
+        if (running || starting || stopping) return
+        selectedSavedProxyId = profile.id
+        protocol = profile.protocol
+        host = profile.host
+        port = profile.port.toString()
+        auth = profile.authenticationRequired
+        username = profile.username
+        password = profile.password
+        coroutineScope.launch {
+            runCatching { withContext(Dispatchers.IO) { profileStore.select(profile.id) } }
+                .onFailure { error = "تعذر حفظ اختيار البروكسي: ${it.message ?: "خطأ في قاعدة البيانات"}" }
+        }
+    }
+
+    fun saveProxyProfile(name: String, existingId: String?) {
+        val candidate = SavedProxy(
+            id = existingId.orEmpty(), name = name, protocol = protocol,
+            host = host.trim(), port = port.toIntOrNull() ?: 0,
+            authenticationRequired = auth, username = username, password = password,
+        )
+        coroutineScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val saved = profileStore.save(candidate)
+                    profileStore.loadAll() to saved
+                }
+            }.onSuccess { (profiles, saved) ->
+                savedProxies = profiles
+                selectedSavedProxyId = saved.id
+                error = null
+                AdvancedOperationLog.output(context, "حُفظ إعداد بروكسي محليًا في قاعدة البيانات المشفرة.")
+            }.onFailure { error = it.message ?: "تعذر حفظ البروكسي. تحقق من المعلومات وحاول مجددًا." }
+        }
+    }
+
+    fun deleteProxyProfile(profile: SavedProxy) {
+        if (running || starting || stopping) return
+        coroutineScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    profileStore.delete(profile.id)
+                    profileStore.loadAll()
+                }
+            }.onSuccess { profiles ->
+                savedProxies = profiles
+                val selectedProfile = profiles.firstOrNull { it.selected } ?: profiles.firstOrNull()
+                selectedSavedProxyId = selectedProfile?.id
+                if (selectedProfile != null) selectProxyProfile(selectedProfile)
+                else {
+                    selectedSavedProxyId = null
+                    host = ""; port = ""; username = ""; password = ""; auth = false
+                }
+            }.onFailure { error = it.message ?: "تعذر حذف البروكسي المحفوظ." }
+        }
+    }
+
     val exportLogLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/plain")
     ) { destination ->
@@ -302,6 +383,24 @@ class MainActivity : ComponentActivity() {
     }
 
     LaunchedEffect(Unit) {
+        runCatching { withContext(Dispatchers.IO) { profileStore.loadAll() } }
+            .onSuccess { profiles ->
+                savedProxies = profiles
+                val selectedProfile = profiles.firstOrNull { it.selected } ?: profiles.firstOrNull()
+                if (selectedProfile != null) {
+                    selectedSavedProxyId = selectedProfile.id
+                    protocol = selectedProfile.protocol
+                    host = selectedProfile.host
+                    port = selectedProfile.port.toString()
+                    auth = selectedProfile.authenticationRequired
+                    username = selectedProfile.username
+                    password = selectedProfile.password
+                }
+            }
+            .onFailure {
+                error = "تعذر فتح قاعدة بيانات البروكسيات المحفوظة: ${it.message ?: "تعذر فك التشفير"}"
+                AdvancedOperationLog.error(context, "تعذر تحميل بيانات اعتماد البروكسي المشفرة.")
+            }
         if (!ProxyLocalService.isRunning(context) && AdvancedSystemProxy.hasPendingRestore(context)) {
             AdvancedOperationLog.info(context, "اكتشاف جلسة متقدمة سابقة؛ محاولة استعادة بروكسي النظام.")
             val restoreResult = withContext(Dispatchers.IO) {
@@ -467,7 +566,7 @@ class MainActivity : ComponentActivity() {
             withContext(Dispatchers.Main) {
                 stopping = false
                 if (restoreResult.isSuccess) {
-                    AdvancedOperationLog.output(context, "تمت الاستعادة؛ إيقاف خدمة البروكسي المحلي.")
+                    AdvancedOperationLog.output(context, "أُعيد Android إلى الاتصال المباشر ثم أُوقفت خدمة البروكسي المحلي.")
                     locationController.stop()
                     ProxyLocalService.stop(context)
                     running = false
@@ -519,7 +618,24 @@ class MainActivity : ComponentActivity() {
             error = "أدخل المضيف والمنفذ وبيانات المصادقة بشكل صحيح."
             return
         }
-        if (mode == "vpn") requestStartVpn() else requestStartAdvanced()
+        if (auth && password.isBlank()) {
+            error = "أدخل كلمة مرور البروكسي أو أوقف خيار المصادقة."
+            return
+        }
+        error = null
+        checkingEndpoint = true
+        AdvancedOperationLog.info(context, "التحقق من إمكانية الوصول إلى خادم البروكسي قبل توجيه اتصال الجهاز (مهلة 5 ثوانٍ).")
+        coroutineScope.launch {
+            val probe = withContext(Dispatchers.IO) { ProxyEndpointProbe.check(host, parsedPort!!) }
+            if (probe.isFailure) {
+                checkingEndpoint = false
+                AdvancedOperationLog.error(context, "تعذر الوصول إلى منفذ خادم البروكسي؛ لم نغيّر إعدادات الشبكة في Android.")
+                error = "تعذر الوصول إلى خادم البروكسي. افحص عنوان الخادم والمنفذ واتصال الشبكة، ثم حاول مجددًا."
+                return@launch
+            }
+            checkingEndpoint = false
+            if (mode == "vpn") requestStartVpn() else requestStartAdvanced()
+        }
     }
 
     fun stopProxy() {
@@ -580,15 +696,15 @@ class MainActivity : ComponentActivity() {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = mode == "vpn",
-                        onClick = { if (!running && !starting) { mode = "vpn"; error = null } },
+                        onClick = { if (!running && !starting && !checkingEndpoint) { mode = "vpn"; error = null } },
                         label = { Text("VPN بلمسة واحدة (موصى به)") },
-                        enabled = !running && !starting
+                        enabled = !running && !starting && !checkingEndpoint
                     )
                     FilterChip(
                         selected = mode == "advanced",
-                        onClick = { if (!running && !starting) { mode = "advanced"; error = null } },
+                        onClick = { if (!running && !starting && !checkingEndpoint) { mode = "advanced"; error = null } },
                         label = { Text("متقدم: بدون أيقونة VPN") },
-                        enabled = !running && !starting
+                        enabled = !running && !starting && !checkingEndpoint
                     )
                 }
                 Text(
@@ -600,6 +716,39 @@ class MainActivity : ComponentActivity() {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+        }
+
+        // ── Saved proxy profiles: available in both connection modes ──────────
+        item {
+            SavedProxyManagerCard(
+                profiles = savedProxies,
+                selectedId = selectedSavedProxyId,
+                enabled = !running && !starting && !checkingEndpoint && !stopping,
+                onSelect = { selectProxyProfile(it) },
+                onSave = { name, id -> saveProxyProfile(name, id) },
+                onDelete = { deleteProxyProfile(it) },
+            )
+        }
+
+        // ── Connection details ───────────────────────────────────────────────
+        item { Text("تفاصيل الاتصال", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(protocol == "socks5", { protocol = "socks5" }, label = { Text("SOCKS5") }, enabled = !running && !starting && !checkingEndpoint)
+                FilterChip(protocol == "http", { protocol = "http" }, label = { Text("HTTP") }, enabled = !running && !starting && !checkingEndpoint)
+            }
+        }
+        item { OutlinedTextField(host, { host = it }, Modifier.fillMaxWidth(), label = { Text("مضيف البروكسي أو عنوان IP") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint) }
+        item { OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.fillMaxWidth(), label = { Text("المنفذ") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint) }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Checkbox(auth, { auth = it }, enabled = !running && !starting && !checkingEndpoint)
+                Text("البروكسي يتطلب مصادقة")
+            }
+        }
+        if (auth) {
+            item { OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint) }
+            item { OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !running && !starting && !checkingEndpoint) }
         }
 
         // ── Advanced proxy setup (embedded Wireless ADB)
@@ -747,27 +896,6 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // ── Connection details ───────────────────────────────────────────────
-        item { Text("تفاصيل الاتصال", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(protocol == "socks5", { protocol = "socks5" }, label = { Text("SOCKS5") })
-                FilterChip(protocol == "http", { protocol = "http" }, label = { Text("HTTP") })
-            }
-        }
-        item { OutlinedTextField(host, { host = it }, Modifier.fillMaxWidth(), label = { Text("مضيف البروكسي أو عنوان IP") }, singleLine = true, enabled = !running && !starting) }
-        item { OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.fillMaxWidth(), label = { Text("المنفذ") }, singleLine = true, enabled = !running && !starting) }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.Checkbox(auth, { auth = it }, enabled = !running && !starting)
-                Text("البروكسي يتطلب مصادقة")
-            }
-        }
-        if (auth) {
-            item { OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true) }
-            item { OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, visualTransformation = PasswordVisualTransformation(), singleLine = true) }
-        }
-
         // ── Mock location ────────────────────────────────────────────────────
         item {
             Card(Modifier.fillMaxWidth()) {
@@ -775,7 +903,7 @@ class MainActivity : ComponentActivity() {
                     Text("موقع وهمي اختياري", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text("يتطلب Android اختيار هذا التطبيق من خيارات المطوّر.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(mockLocation, { mockLocation = it }, enabled = !running && !starting)
+                        androidx.compose.material3.Checkbox(mockLocation, { mockLocation = it }, enabled = !running && !starting && !checkingEndpoint)
                         Text("تفعيل الموقع الوهمي")
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -838,10 +966,10 @@ class MainActivity : ComponentActivity() {
                 Button(
                     onClick = ::requestStart,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
-                    enabled = !starting && canConnect,
+                    enabled = !starting && !checkingEndpoint && canConnect,
                     shape = RoundedCornerShape(15.dp)
                 ) {
-                    if (starting) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    if (starting || checkingEndpoint) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     else Text(if (mode == "vpn") "اتصال" else "بدء بروكسي الجهاز", fontWeight = FontWeight.Bold)
                 }
             }
@@ -852,6 +980,7 @@ class MainActivity : ComponentActivity() {
             Text(
                 when {
                     running -> "متصل"
+                    checkingEndpoint -> "جارٍ فحص إمكانية الوصول إلى خادم البروكسي…"
                     starting -> if (mode == "vpn") "بانتظار منح Android إذن VPN…" else "بانتظار تشغيل البروكسي المحلي…"
                     else -> "غير متصل"
                 },
@@ -904,6 +1033,123 @@ class MainActivity : ComponentActivity() {
                 exit = fadeOut() + shrinkVertically()
             ) { content() }
         }
+    }
+}
+
+@Composable
+private fun SavedProxyManagerCard(
+    profiles: List<SavedProxy>,
+    selectedId: String?,
+    enabled: Boolean,
+    onSelect: (SavedProxy) -> Unit,
+    onSave: (String, String?) -> Unit,
+    onDelete: (SavedProxy) -> Unit,
+) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    var editorOpen by remember { mutableStateOf(false) }
+    var deleteConfirmationOpen by remember { mutableStateOf(false) }
+    var editingId by remember { mutableStateOf<String?>(null) }
+    var profileName by remember { mutableStateOf("") }
+    val selected = profiles.firstOrNull { it.id == selectedId }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text("بروكسياتي المحفوظة", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("احفظ اتصالك مرة واحدة واستخدمه في وضعي VPN والمتقدم.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Box {
+                    OutlinedButton(onClick = { menuExpanded = true }, enabled = enabled && profiles.isNotEmpty()) {
+                        Text(if (selected != null) "اختيار بروكسي" else "اختر بروكسي")
+                    }
+                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        profiles.forEach { profile ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Text(profile.name, fontWeight = if (profile.id == selectedId) FontWeight.Bold else FontWeight.Medium)
+                                        Text("${profile.protocol.uppercase()} • ${profile.endpoint}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                onClick = { menuExpanded = false; onSelect(profile) },
+                                enabled = enabled,
+                            )
+                        }
+                    }
+                }
+            }
+            if (selected != null) {
+                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(selected.name, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
+                            Text("${selected.protocol.uppercase()} • ${selected.endpoint}", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
+                            Text(if (selected.authenticationRequired) "بيانات المصادقة محفوظة ومشفّرة" else "من دون مصادقة", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelSmall)
+                        }
+                        TextButton(onClick = { editingId = selected.id; profileName = selected.name; editorOpen = true }, enabled = enabled) { Text("تعديل") }
+                        TextButton(onClick = { deleteConfirmationOpen = true }, enabled = enabled) { Text("حذف", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+            } else {
+                Text("ما أضفت بروكسي بعد. احفظ بيانات اتصال جديدة لتظهر هنا وتبقى بعد إغلاق التطبيق.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { editingId = null; profileName = ""; editorOpen = true }, enabled = enabled, modifier = Modifier.weight(1f)) {
+                    Text("إضافة بروكسي")
+                }
+                if (selected != null) {
+                    OutlinedButton(onClick = { editingId = selected.id; profileName = selected.name; editorOpen = true }, enabled = enabled, modifier = Modifier.weight(1f)) {
+                        Text("حفظ التغييرات")
+                    }
+                }
+            }
+            Text("تُخزّن ملفات البروكسي على هذا الجهاز، وتُشفّر كلمات المرور بمفتاح Android الآمن.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    if (editorOpen) {
+        AlertDialog(
+            onDismissRequest = { editorOpen = false },
+            title = { Text(if (editingId == null) "إضافة بروكسي جديد" else "تعديل البروكسي المحفوظ") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("سيُحفَظ عنوان الاتصال والبروتوكول وبيانات المصادقة الحالية في قاعدة البيانات المشفّرة على جهازك.", style = MaterialTheme.typography.bodySmall)
+                    androidx.compose.material3.OutlinedTextField(
+                        value = profileName,
+                        onValueChange = { profileName = it.take(64) },
+                        label = { Text("اسم يميّز هذا البروكسي") },
+                        singleLine = true,
+                        enabled = enabled,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = { onSave(profileName.trim(), editingId); editorOpen = false }, enabled = enabled && profileName.isNotBlank()) {
+                    Text("حفظ البروكسي")
+                }
+            },
+            dismissButton = { TextButton(onClick = { editorOpen = false }) { Text("إلغاء") } },
+        )
+    }
+
+    if (deleteConfirmationOpen && selected != null) {
+        AlertDialog(
+            onDismissRequest = { deleteConfirmationOpen = false },
+            title = { Text("حذف البروكسي المحفوظ؟") },
+            text = { Text("سيُحذف «${selected.name}» وبيانات اعتماده المشفّرة من قاعدة البيانات على هذا الجهاز.") },
+            confirmButton = {
+                Button(onClick = { onDelete(selected); deleteConfirmationOpen = false }, enabled = enabled, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
+                    Text("حذف")
+                }
+            },
+            dismissButton = { TextButton(onClick = { deleteConfirmationOpen = false }) { Text("إلغاء") } },
+        )
     }
 }
 

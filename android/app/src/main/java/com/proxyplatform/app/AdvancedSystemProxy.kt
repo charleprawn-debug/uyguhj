@@ -47,47 +47,62 @@ internal object AdvancedSystemProxy {
     }
 
     /**
-     * Restores settings captured by [apply]. For an installation upgraded while
-     * an older advanced session is active, only clears the old loopback proxy
-     * when it still points at this app; unrelated user settings are untouched.
+     * Restores the saved system proxy settings without overwriting a newer
+     * setting chosen by the user. Android's :0 sentinel explicitly disables
+     * ProxyTracker and prompts apps to drop a stale loopback proxy. Restoration
+     * can be safely retried after process death at any intermediate step.
      */
     fun restore(context: Context, expectedProxy: String? = null): Result<Unit> = runCatching {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         AdvancedOperationLog.info(context, "بدء استعادة إعدادات بروكسي Android السابقة.")
         if (!prefs.getBoolean(SNAPSHOT_SAVED, false)) {
             if (expectedProxy != null && read(context, "http_proxy").getOrThrow() == expectedProxy) {
-                write(context, "http_proxy", ":0").getOrThrow()
                 write(context, "global_http_proxy_host", null).getOrThrow()
                 write(context, "global_http_proxy_port", null).getOrThrow()
-                AdvancedOperationLog.output(context, "أُزيل إعداد loopback قديم تابع للوضع المتقدم.")
+                write(context, "http_proxy", ":0").getOrThrow()
+                check(ProxyRestorePolicy.isNoProxy(read(context, "http_proxy").getOrThrow())) {
+                    "تعذر تعطيل بروكسي النظام القديم."
+                }
+                AdvancedOperationLog.output(context, "أُزيل بروكسي loopback القديم وأُعيد اتصال Android المباشر.")
             } else {
                 AdvancedOperationLog.info(context, "لا توجد لقطة محفوظة؛ لا توجد إعدادات سابقة تابعة لهذه الجلسة للاستعادة.")
             }
             return@runCatching
         }
-        if (expectedProxy != null && read(context, "http_proxy").getOrThrow() != expectedProxy) {
-            // The proxy was changed externally after we installed ours. Keep
-            // that newer setting and drop only our recovery snapshot.
+
+        val snapshot = JSONObject(prefs.getString(SNAPSHOT, "{}") ?: "{}")
+        val currentProxy = read(context, "http_proxy").getOrThrow()
+        val originalProxy = snapshot.optString("http_proxy").takeUnless { it == "null" }
+        if (expectedProxy != null &&
+            ProxyRestorePolicy.isExternalOverride(currentProxy, expectedProxy, originalProxy)
+        ) {
+            // The user changed the system proxy while our session was active.
+            // Keep that newer value and discard only our stale recovery snapshot.
             check(prefs.edit().remove(SNAPSHOT).remove(SNAPSHOT_SAVED).commit()) {
                 "تعذر تحرير لقطة إعدادات البروكسي القديمة."
             }
-            AdvancedOperationLog.output(context, "لم تتغير قيمة النظام خارجيًا بواسطة التطبيق؛ حُفظت القيمة الحالية وحُذفت لقطة الاستعادة.")
+            AdvancedOperationLog.output(context, "حُفظ تغيير بروكسي النظام الذي أجراه المستخدم أثناء الجلسة، وحُذفت لقطة الاستعادة القديمة.")
             return@runCatching
         }
 
-        val snapshot = JSONObject(prefs.getString(SNAPSHOT, "{}") ?: "{}")
-        // Restore host/port first and the primary setting last so Android sees
-        // the complete original value when it refreshes its proxy tracker.
-        listOf("global_http_proxy_host", "global_http_proxy_port", "http_proxy").forEach { key ->
+        // Restore the host/port first, then force the framework proxy observer
+        // to an explicit direct state when the original settings were empty.
+        managedSettings.forEach { key ->
             val value = snapshot.optString(key, "null")
-            write(context, key, value.takeUnless { it == "null" }).getOrThrow()
+            val restoredValue = if (key == "http_proxy" && ProxyRestorePolicy.isNoProxy(value)) ":0" else value
+            write(context, key, restoredValue.takeUnless { it == "null" }).getOrThrow()
             val restored = read(context, key).getOrThrow()
-            check(restored == value) { "تعذر استعادة إعداد النظام $key." }
+            val matches = if (key == "http_proxy" && ProxyRestorePolicy.isNoProxy(value)) {
+                ProxyRestorePolicy.isNoProxy(restored)
+            } else {
+                restored == value
+            }
+            check(matches) { "تعذر استعادة إعداد النظام $key." }
         }
         check(prefs.edit().remove(SNAPSHOT).remove(SNAPSHOT_SAVED).commit()) {
             "تعذر إنهاء استعادة إعدادات البروكسي."
         }
-        AdvancedOperationLog.output(context, "تمت استعادة قيم بروكسي Android والتحقق منها.")
+        AdvancedOperationLog.output(context, "تمت استعادة إعدادات بروكسي Android والتحقق من وضع الاتصال المباشر.")
     }.onFailure {
         AdvancedOperationLog.error(context, "فشلت استعادة بروكسي Android: ${it.message ?: it.javaClass.simpleName}")
     }

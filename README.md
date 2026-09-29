@@ -71,6 +71,10 @@ Run `database/01_schema.sql` and then the corrected `database/02_seed_data.sql` 
 
 The Android client includes a device-wide `VpnService` path backed by the official Sing-box `libbox.aar` runtime. It consumes a generated `Config.json` with DoH, strict routing, and auto routing. The transport audit is documented in [`docs/NETWORK_SECURITY_AUDIT.md`](docs/NETWORK_SECURITY_AUDIT.md). Multiplexing is enabled only for Sing-box outbounds that support it; Sing-box rejects Mux on SOCKS and HTTP. Android's system VPN indicator remains OS-controlled. The checked-in debug artifact is arm64-v8a and still requires physical-device validation before release.
 
+## Saved local proxy profiles and connection safety
+
+Android proxy profiles are stored in a private on-device SQLite database. Each username and password is encrypted using AES-256-GCM with a non-exportable Android Keystore key. Profiles are not sent to the API and can be selected in either VPN or advanced mode. The advanced-mode stop flow restores prior Android proxy settings, explicitly switches Android to its direct (`:0`) state when no prior proxy existed, verifies the result, and then closes the local tunnel. Before either connection mode starts, the app checks that the upstream proxy TCP endpoint is reachable so an unavailable proxy does not silently capture device traffic.
+
 ## Proxy-matched Mock GPS
 
 The Android app includes an optional, user-controlled Mock Location mode. Automatic mode looks up the proxy exit location through the configured proxy; manual mode accepts validated latitude and longitude. Before enabling it, Android requires the user to select **Proxy Platform** under Developer options → Select mock location app. This feature does not change hardware GPS or bypass mock-location detection, and some apps may reject mock locations.

@@ -1,7 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 
 android { namespace = "com.proxyplatform.app"; compileSdk = 35
-    defaultConfig { applicationId = "com.proxyplatform.app"; minSdk = 26; targetSdk = 35; versionCode = 4; versionName = "2.0.2"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"; vectorDrawables { useSupportLibrary = true }; buildConfigField("String", "API_BASE_URL", "\"${providers.gradleProperty("API_BASE_URL").orElse("https://uyguhj-production.up.railway.app/api/v1").get()}\"") }
+    defaultConfig { applicationId = "com.proxyplatform.app"; minSdk = 26; targetSdk = 35; versionCode = 5; versionName = "2.0.3"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"; vectorDrawables { useSupportLibrary = true }; buildConfigField("String", "API_BASE_URL", "\"${providers.gradleProperty("API_BASE_URL").orElse("https://uyguhj-production.up.railway.app/api/v1").get()}\"") }
     buildTypes { release { isMinifyEnabled = false; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") }; debug { applicationIdSuffix = ".debug" } }
     buildFeatures { compose = true; buildConfig = true }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
