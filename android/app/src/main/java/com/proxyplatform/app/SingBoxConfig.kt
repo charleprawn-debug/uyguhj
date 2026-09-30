@@ -118,6 +118,12 @@ object SingBoxConfig {
                 .put(outbound)
                 .put(JSONObject().put("type", "direct").put("tag", "direct")))
             .put("route", JSONObject()
+                // DNS from Android's TUN must be handled by sing-box. Without
+                // this rule it can be sent as raw UDP through an HTTP proxy,
+                // which cannot carry UDP and leaves every app without DNS.
+                .put("rules", JSONArray().put(JSONObject()
+                    .put("port", 53)
+                    .put("action", "hijack-dns")))
                 .put("auto_detect_interface", true)
                 .put("final", "proxy"))
 

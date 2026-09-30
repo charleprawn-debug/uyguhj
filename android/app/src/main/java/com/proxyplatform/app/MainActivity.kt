@@ -47,8 +47,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -85,7 +83,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
-import com.proxyplatform.app.adb.AdbPairingNotifier
+import com.proxyplatform.app.adb.PairingCodeInput
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
@@ -435,12 +433,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    fun saveProxyProfile(name: String, existingId: String?) {
-        val candidate = SavedProxy(
-            id = existingId.orEmpty(), name = name, protocol = protocol,
-            host = host.trim(), port = port.toIntOrNull() ?: 0,
-            authenticationRequired = auth, username = username, password = password,
-        )
+    fun saveProxyProfile(candidate: SavedProxy) {
         coroutineScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
@@ -450,6 +443,12 @@ class MainActivity : ComponentActivity() {
             }.onSuccess { (profiles, saved) ->
                 savedProxies = profiles
                 selectedSavedProxyId = saved.id
+                protocol = saved.protocol
+                host = saved.host
+                port = saved.port.toString()
+                auth = saved.authenticationRequired
+                username = saved.username
+                password = saved.password
                 error = null
                 AdvancedOperationLog.output(context, "حُفظ إعداد بروكسي محليًا في قاعدة البيانات المشفرة.")
             }.onFailure { error = it.message ?: "تعذر حفظ البروكسي. تحقق من المعلومات وحاول مجددًا." }
@@ -517,9 +516,18 @@ class MainActivity : ComponentActivity() {
 
     LaunchedEffect(mode) {
         if (mode == "advanced") {
+            var pairingPromptRequested = false
             while (true) {
                 val newWirelessState = withContext(Dispatchers.IO) {
                     WirelessDebuggingManager.checkState(context)
+                }
+                if (!pairingPromptRequested && (
+                        newWirelessState == WirelessDebuggingManager.DebuggingState.NOT_PAIRED ||
+                            newWirelessState == WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED
+                        )
+                ) {
+                    pairingPromptRequested = true
+                    ensurePairingNotification()
                 }
                 if (newWirelessState != wirelessState) {
                     AdvancedOperationLog.info(context, "حالة Wireless ADB: ${newWirelessState.name}.")
@@ -703,6 +711,10 @@ class MainActivity : ComponentActivity() {
 
     fun requestStart() {
         val parsedPort = port.toIntOrNull()
+        if (selectedSavedProxyId == null) {
+            error = "أضف بروكسيًا واحفظه ثم اختره قبل بدء الاتصال."
+            return
+        }
         if (host.isBlank() || parsedPort !in 1..65535 || (auth && username.isBlank())) {
             error = "أدخل المضيف والمنفذ وبيانات المصادقة بشكل صحيح."
             return
@@ -715,11 +727,20 @@ class MainActivity : ComponentActivity() {
         checkingEndpoint = true
         AdvancedOperationLog.info(context, "التحقق من إمكانية الوصول إلى خادم البروكسي قبل توجيه اتصال الجهاز (مهلة 5 ثوانٍ).")
         coroutineScope.launch {
-            val probe = withContext(Dispatchers.IO) { ProxyEndpointProbe.check(host, parsedPort!!) }
+            val probe = withContext(Dispatchers.IO) {
+                ProxyEndpointProbe.check(
+                    host,
+                    parsedPort!!,
+                    protocol,
+                    if (auth) username else "",
+                    if (auth) password else "",
+                )
+            }
             if (probe.isFailure) {
                 checkingEndpoint = false
-                AdvancedOperationLog.error(context, "تعذر الوصول إلى منفذ خادم البروكسي؛ لم نغيّر إعدادات الشبكة في Android.")
-                error = "تعذر الوصول إلى خادم البروكسي. افحص عنوان الخادم والمنفذ واتصال الشبكة، ثم حاول مجددًا."
+                val reason = probe.exceptionOrNull()?.message
+                AdvancedOperationLog.error(context, "فشل فحص اتصال البروكسي قبل إنشاء النفق؛ لم نغيّر إعدادات شبكة Android.")
+                error = reason ?: "تعذر اختبار البروكسي. تحقق من الخادم والمنفذ والبروتوكول وبيانات المصادقة."
                 return@launch
             }
             checkingEndpoint = false
@@ -833,35 +854,9 @@ class MainActivity : ComponentActivity() {
                 selectedId = selectedSavedProxyId,
                 enabled = !running && !starting && !checkingEndpoint && !stopping,
                 onSelect = { selectProxyProfile(it) },
-                onSave = { name, id -> saveProxyProfile(name, id) },
+                onSave = { saveProxyProfile(it) },
                 onDelete = { deleteProxyProfile(it) },
             )
-        }
-
-        // ── Connection details ────────────────────────────────────────────────
-        item {
-            KUNCard {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                    Text("بيانات البروكسي", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("اختر بروتوكول الاتصال وأدخل بيانات الخادم.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(protocol == "socks5", { protocol = "socks5" }, label = { Text("SOCKS5") }, enabled = !running && !starting && !checkingEndpoint)
-                        FilterChip(protocol == "http", { protocol = "http" }, label = { Text("HTTP") }, enabled = !running && !starting && !checkingEndpoint)
-                    }
-                    OutlinedTextField(host, { host = it }, Modifier.fillMaxWidth(), label = { Text("مضيف البروكسي أو عنوان IP") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint, shape = RoundedCornerShape(15.dp))
-                    OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.fillMaxWidth(), label = { Text("المنفذ") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint, shape = RoundedCornerShape(15.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(auth, { auth = it }, enabled = !running && !starting && !checkingEndpoint)
-                        Text("البروكسي يتطلب مصادقة", style = MaterialTheme.typography.bodyMedium)
-                    }
-                    AnimatedVisibility(visible = auth) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint, shape = RoundedCornerShape(15.dp))
-                            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !running && !starting && !checkingEndpoint, shape = RoundedCornerShape(15.dp))
-                        }
-                    }
-                }
-            }
         }
 
         // ── Advanced proxy setup (embedded Wireless ADB)
@@ -912,7 +907,7 @@ class MainActivity : ComponentActivity() {
                             )
                             OutlinedTextField(
                                 value = pairingCode,
-                                onValueChange = { value -> pairingCode = value.filter { it in '0'..'9' }.take(6) },
+                                onValueChange = { value -> pairingCode = PairingCodeInput.digitsOnly(value).take(6) },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("رمز الاقتران (6 أرقام فقط)") },
                                 singleLine = true,
@@ -945,6 +940,11 @@ class MainActivity : ComponentActivity() {
                                 if (pairing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                                 else Text("اقتران واتصال تلقائي")
                             }
+                            OutlinedButton(
+                                onClick = ::ensurePairingNotification,
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !pairing,
+                            ) { Text("إدخال الرمز من الإشعار") }
                             if (wirelessState == WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED) {
                                 OutlinedButton(
                                     onClick = {
@@ -1031,7 +1031,7 @@ class MainActivity : ComponentActivity() {
 
     }
 
-    val hasDetails = host.isNotBlank() && port.isNotBlank()
+    val hasDetails = selectedSavedProxyId != null && host.isNotBlank() && port.isNotBlank()
     val canConnect = hasDetails && (mode == "vpn" || wirelessState == WirelessDebuggingManager.DebuggingState.READY)
     Surface(
         modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().imePadding(),
@@ -1143,124 +1143,6 @@ class MainActivity : ComponentActivity() {
             }
             Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }
-}
-
-@Composable
-private fun SavedProxyManagerCard(
-    profiles: List<SavedProxy>,
-    selectedId: String?,
-    enabled: Boolean,
-    onSelect: (SavedProxy) -> Unit,
-    onSave: (String, String?) -> Unit,
-    onDelete: (SavedProxy) -> Unit,
-) {
-    var menuExpanded by remember { mutableStateOf(false) }
-    var editorOpen by remember { mutableStateOf(false) }
-    var deleteConfirmationOpen by remember { mutableStateOf(false) }
-    var editingId by remember { mutableStateOf<String?>(null) }
-    var profileName by remember { mutableStateOf("") }
-    val selected = profiles.firstOrNull { it.id == selectedId }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, KunPalette.Border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text("بروكسياتي المحفوظة", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("احفظ اتصالك مرة واحدة واستخدمه في وضعي VPN والمتقدم.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Box {
-                    OutlinedButton(onClick = { menuExpanded = true }, enabled = enabled && profiles.isNotEmpty()) {
-                        Text(if (selected != null) "اختيار بروكسي" else "اختر بروكسي")
-                    }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                        profiles.forEach { profile ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                        Text(profile.name, fontWeight = if (profile.id == selectedId) FontWeight.Bold else FontWeight.Medium)
-                                        Text("${profile.protocol.uppercase()} • ${profile.endpoint}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                onClick = { menuExpanded = false; onSelect(profile) },
-                                enabled = enabled,
-                            )
-                        }
-                    }
-                }
-            }
-            if (selected != null) {
-                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) {
-                    Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(selected.name, color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
-                            Text("${selected.protocol.uppercase()} • ${selected.endpoint}", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
-                            Text(if (selected.authenticationRequired) "بيانات المصادقة محفوظة ومشفّرة" else "من دون مصادقة", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.labelSmall)
-                        }
-                        TextButton(onClick = { editingId = selected.id; profileName = selected.name; editorOpen = true }, enabled = enabled) { Text("تعديل") }
-                        TextButton(onClick = { deleteConfirmationOpen = true }, enabled = enabled) { Text("حذف", color = MaterialTheme.colorScheme.error) }
-                    }
-                }
-            } else {
-                Text("ما أضفت بروكسي بعد. احفظ بيانات اتصال جديدة لتظهر هنا وتبقى بعد إغلاق التطبيق.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { editingId = null; profileName = ""; editorOpen = true }, enabled = enabled, modifier = Modifier.weight(1f)) {
-                    Text("إضافة بروكسي")
-                }
-                if (selected != null) {
-                    OutlinedButton(onClick = { editingId = selected.id; profileName = selected.name; editorOpen = true }, enabled = enabled, modifier = Modifier.weight(1f)) {
-                        Text("حفظ التغييرات")
-                    }
-                }
-            }
-            Text("تُخزّن ملفات البروكسي على هذا الجهاز، وتُشفّر كلمات المرور بمفتاح Android الآمن.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-
-    if (editorOpen) {
-        AlertDialog(
-            onDismissRequest = { editorOpen = false },
-            title = { Text(if (editingId == null) "إضافة بروكسي جديد" else "تعديل البروكسي المحفوظ") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("سيُحفَظ عنوان الاتصال والبروتوكول وبيانات المصادقة الحالية في قاعدة البيانات المشفّرة على جهازك.", style = MaterialTheme.typography.bodySmall)
-                    androidx.compose.material3.OutlinedTextField(
-                        value = profileName,
-                        onValueChange = { profileName = it.take(64) },
-                        label = { Text("اسم يميّز هذا البروكسي") },
-                        singleLine = true,
-                        enabled = enabled,
-                    )
-                }
-            },
-            confirmButton = {
-                Button(onClick = { onSave(profileName.trim(), editingId); editorOpen = false }, enabled = enabled && profileName.isNotBlank()) {
-                    Text("حفظ البروكسي")
-                }
-            },
-            dismissButton = { TextButton(onClick = { editorOpen = false }) { Text("إلغاء") } },
-        )
-    }
-
-    if (deleteConfirmationOpen && selected != null) {
-        AlertDialog(
-            onDismissRequest = { deleteConfirmationOpen = false },
-            title = { Text("حذف البروكسي المحفوظ؟") },
-            text = { Text("سيُحذف «${selected.name}» وبيانات اعتماده المشفّرة من قاعدة البيانات على هذا الجهاز.") },
-            confirmButton = {
-                Button(onClick = { onDelete(selected); deleteConfirmationOpen = false }, enabled = enabled, colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
-                    Text("حذف")
-                }
-            },
-            dismissButton = { TextButton(onClick = { deleteConfirmationOpen = false }) { Text("إلغاء") } },
-        )
     }
 }
 
