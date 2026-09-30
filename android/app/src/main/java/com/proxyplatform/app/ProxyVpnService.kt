@@ -170,6 +170,10 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
             appMarketingVersion = BuildConfig.VERSION_NAME
             debug = BuildConfig.DEBUG
         })
+        AdvancedOperationLog.info(
+            this,
+            "محرك sing-box=${Libbox.version()}، TUN stack=gvisor، MTU=${SingBoxConfig.TUN_MTU}."
+        )
     }
 
     @Suppress("DEPRECATION")

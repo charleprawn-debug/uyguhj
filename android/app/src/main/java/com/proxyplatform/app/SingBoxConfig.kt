@@ -112,7 +112,7 @@ object SingBoxConfig {
                 .put("mtu", TUN_MTU)
                 .put("auto_route", true)
                 .put("strict_route", false)
-                .put("stack", "system")
+                .put("stack", "gvisor")
                 .put("sniff", false)))
             .put("outbounds", JSONArray()
                 .put(outbound)
@@ -141,5 +141,5 @@ object SingBoxConfig {
     private const val CONFIG_FILE = "Config.json"
     private const val TUN_CONFIG_FILE = "ConfigTun.json"
     const val TUN_ADDRESS = "172.19.0.1/28"
-    const val TUN_MTU = 9000
+    const val TUN_MTU = 1400
 }
