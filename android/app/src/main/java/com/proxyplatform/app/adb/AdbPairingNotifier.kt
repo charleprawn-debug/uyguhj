@@ -26,7 +26,7 @@ object AdbPairingNotifier {
         }
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_transparent)
-            .setContentTitle("اقتران Proxy Platform")
+            .setContentTitle("اقتران KUN Proxy")
             .setContentText("أدخل رمز الاقتران الظاهر في إعدادات التصحيح اللاسلكي")
             .setAutoCancel(true)
             .build()

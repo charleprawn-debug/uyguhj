@@ -15,11 +15,14 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,8 +32,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -69,9 +74,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -95,31 +98,37 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
-private data class Product(val id: String, val name: String, val description: String, val protocol: String, val country: String, val city: String, val ipType: String, val daily: String, val monthly: String, val featured: Boolean)
-private data class Profile(val email: String, val name: String, val role: String, val verified: Boolean)
-private data class Subscription(val status: String, val expires: String, val product: String, val protocol: String)
-private enum class Screen { MARKET, SUBSCRIPTIONS, PROXY, PROFILE }
-
-private val ProxyColors = lightColorScheme(
-    primary = Color(0xFF2563EB), onPrimary = Color.White,
-    primaryContainer = Color(0xFFEAF1FF), onPrimaryContainer = Color(0xFF153B8A),
-    secondary = Color(0xFF0F8B78), onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE0F5F0), onSecondaryContainer = Color(0xFF075E53),
-    tertiary = Color(0xFFB66B08), onTertiary = Color.White,
-    tertiaryContainer = Color(0xFFFFF1D8), onTertiaryContainer = Color(0xFF744200),
-    background = Color(0xFFF6F8FC), onBackground = Color(0xFF18202F),
-    surface = Color.White, onSurface = Color(0xFF18202F),
-    surfaceVariant = Color(0xFFF0F3F8), onSurfaceVariant = Color(0xFF616B7C),
-    error = Color(0xFFCE3D43), onError = Color.White,
-    errorContainer = Color(0xFFFFE9E8), onErrorContainer = Color(0xFF8F1D24),
-    outline = Color(0xFFD8DEE8), outlineVariant = Color(0xFFE8ECF2),
+internal data class Product(
+    val id: String,
+    val name: String,
+    val description: String,
+    val protocol: String,
+    val country: String,
+    val city: String,
+    val ipType: String,
+    val daily: String,
+    val weekly: String,
+    val monthly: String,
+    val featured: Boolean,
 )
+internal data class Profile(val email: String, val name: String, val role: String, val verified: Boolean)
+internal data class Subscription(val status: String, val expires: String, val product: String, val protocol: String)
+internal enum class Screen { MARKET, SUBSCRIPTIONS, PROXY, PROFILE }
 
-private val SuccessGreen = Color(0xFF15866F)
-private val SuccessGreenContainer = Color(0xFFE4F5EF)
+private val SuccessGreen = KunPalette.Success
+private val SuccessGreenContainer = KunPalette.SuccessSoft
 private val OnSuccessGreenContainer = Color(0xFF14624F)
 
-@Composable private fun ProxyTheme(content: @Composable () -> Unit) { MaterialTheme(colorScheme = ProxyColors, content = content) }
+@Composable private fun ProxyTheme(content: @Composable () -> Unit) = KUNTheme(content)
+
+private fun formatProductPrice(value: Double, period: String): String {
+    if (!value.isFinite() || value < 0.0) return ""
+    val amount = java.text.NumberFormat.getNumberInstance(java.util.Locale.US).apply {
+        minimumFractionDigits = 0
+        maximumFractionDigits = 2
+    }.format(value)
+    return "$amount دولار / $period"
+}
 
 private class SessionStore(context: Context) {
     private val prefs = context.getSharedPreferences("proxy_session", Context.MODE_PRIVATE)
@@ -128,7 +137,7 @@ private class SessionStore(context: Context) {
     fun clear() = prefs.edit().clear().apply()
 }
 
-private class ApiClient(context: Context) {
+internal class ApiClient(context: Context) {
     private val appContext = context.applicationContext
     private val store = SessionStore(appContext)
     private val client = OkHttpClient()
@@ -155,28 +164,151 @@ private class ApiClient(context: Context) {
     }
     fun login(email: String, password: String) { val d = request("/auth/login", "POST", JSONObject().put("email", email.trim()).put("password", password)).getJSONObject("data"); store.accessToken = d.getString("accessToken"); store.refreshToken = d.optString("refreshToken") }
     fun register(email: String, password: String, name: String) { request("/auth/register", "POST", JSONObject().put("email", email.trim()).put("password", password).put("fullName", name.trim())) }
-    fun products(): List<Product> { val a = request("/products").getJSONArray("data"); return (0 until a.length()).map { val x = a.getJSONObject(it); Product(x.getString("id"), x.getString("name"), x.optString("description"), x.optString("protocol").uppercase(), x.optString("country_name") + " (" + x.optString("country_code") + ")", x.optString("city"), x.optString("ip_type"), x.optDouble("price_daily").toString() + " دولار/يوم", x.optDouble("price_monthly").toString() + " دولار/شهر", x.optBoolean("is_featured")) } }
+    fun products(): List<Product> {
+        val rows = request("/products").optJSONArray("data")
+            ?: throw IllegalStateException("استجابة السوق غير صالحة.")
+        return (0 until rows.length()).map { index ->
+            val item = rows.getJSONObject(index)
+            val country = listOf(item.optString("country_name"), item.optString("country_code"))
+                .map { it.trim() }.filter { it.isNotBlank() }.distinct().joinToString(" • ")
+            Product(
+                id = item.getString("id"),
+                name = item.getString("name"),
+                description = item.optString("description").trim(),
+                protocol = item.optString("protocol").uppercase(),
+                country = country,
+                city = item.optString("city").trim(),
+                ipType = item.optString("ip_type").trim(),
+                daily = formatProductPrice(item.optDouble("price_daily", Double.NaN), "يوم"),
+                weekly = formatProductPrice(item.optDouble("price_weekly", Double.NaN), "أسبوع"),
+                monthly = formatProductPrice(item.optDouble("price_monthly", Double.NaN), "شهر"),
+                featured = item.optBoolean("is_featured"),
+            )
+        }
+    }
     fun profile(): Profile { val x = request("/me").getJSONObject("data"); return Profile(x.optString("email"), x.optString("full_name", "بدون اسم"), x.optString("role", "user"), x.optBoolean("is_email_verified")) }
     fun subscriptions(): List<Subscription> { val a = request("/me/subscriptions").getJSONArray("data"); return (0 until a.length()).map { val x = a.getJSONObject(it); val p = x.optJSONObject("proxy_products"); Subscription(x.optString("status"), x.optString("expires_at"), p?.optString("name", "البروكسي") ?: "البروكسي", p?.optString("protocol", "") ?: "") } }
     fun loggedIn() = store.accessToken != null
     fun logout() = store.clear()
 }
 
-private class AppViewModel(private val api: ApiClient) : ViewModel() {
+internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     var loggedIn by mutableStateOf(api.loggedIn()); private set
     var loading by mutableStateOf(false); private set
     var error by mutableStateOf<String?>(null); private set
+
     var products by mutableStateOf<List<Product>>(emptyList()); private set
+    var productsLoading by mutableStateOf(false); private set
+    var productsError by mutableStateOf<String?>(null); private set
+
     var profile by mutableStateOf<Profile?>(null); private set
+    var profileLoading by mutableStateOf(false); private set
+    var profileError by mutableStateOf<String?>(null); private set
+
     var subscriptions by mutableStateOf<List<Subscription>>(emptyList()); private set
-    fun login(email: String, password: String) { loading = true; error = null; viewModelScope.launch(Dispatchers.IO) { try { api.login(email, password); withContext(Dispatchers.Main) { loggedIn = true; loading = false; loadProducts() } } catch (e: Exception) { withContext(Dispatchers.Main) { error = e.message ?: "تعذر تسجيل الدخول"; loading = false } } } }
-    fun register(email: String, password: String, name: String, done: () -> Unit) { loading = true; error = null; viewModelScope.launch(Dispatchers.IO) { try { api.register(email, password, name); withContext(Dispatchers.Main) { loading = false; error = "تم إنشاء الحساب. سجّل الدخول للمتابعة."; done() } } catch (e: Exception) { withContext(Dispatchers.Main) { error = e.message ?: "تعذر إنشاء الحساب"; loading = false } } } }
-    fun loadProducts() = viewModelScope.launch(Dispatchers.IO) { try { val value = api.products(); withContext(Dispatchers.Main) { products = value } } catch (e: Exception) { withContext(Dispatchers.Main) { error = e.message ?: "تعذر تحميل الخطط" } } }
-    fun loadProfile() = viewModelScope.launch(Dispatchers.IO) { try { val value = api.profile(); withContext(Dispatchers.Main) { profile = value } } catch (e: Exception) { withContext(Dispatchers.Main) { error = e.message ?: "تعذر تحميل الملف الشخصي" } } }
-    fun loadSubscriptions() = viewModelScope.launch(Dispatchers.IO) { try { val value = api.subscriptions(); withContext(Dispatchers.Main) { subscriptions = value } } catch (e: Exception) { withContext(Dispatchers.Main) { error = e.message ?: "تعذر تحميل الاشتراكات" } } }
-    fun logout() { api.logout(); loggedIn = false; products = emptyList(); profile = null; subscriptions = emptyList(); error = null }
+    var subscriptionsLoading by mutableStateOf(false); private set
+    var subscriptionsError by mutableStateOf<String?>(null); private set
+
+    fun login(email: String, password: String) {
+        loading = true
+        error = null
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                api.login(email, password)
+                withContext(Dispatchers.Main) {
+                    loggedIn = true
+                    loading = false
+                    loadProducts()
+                }
+            } catch (failure: Exception) {
+                withContext(Dispatchers.Main) {
+                    error = failure.message ?: "تعذر تسجيل الدخول. تحقق من بياناتك وحاول مجددًا."
+                    loading = false
+                }
+            }
+        }
+    }
+
+    fun register(email: String, password: String, name: String, done: () -> Unit) {
+        loading = true
+        error = null
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                api.register(email, password, name)
+                withContext(Dispatchers.Main) {
+                    loading = false
+                    error = "تم إنشاء الحساب. سجّل الدخول للمتابعة."
+                    done()
+                }
+            } catch (failure: Exception) {
+                withContext(Dispatchers.Main) {
+                    error = failure.message ?: "تعذر إنشاء الحساب. تحقق من البيانات وحاول مجددًا."
+                    loading = false
+                }
+            }
+        }
+    }
+
+    fun loadProducts() = viewModelScope.launch {
+        if (productsLoading) return@launch
+        productsLoading = true
+        productsError = null
+        try {
+            products = withContext(Dispatchers.IO) { api.products() }
+        } catch (failure: Exception) {
+            productsError = when {
+                failure.message.orEmpty().contains("Could not load products", ignoreCase = true) ->
+                    "خدمة السوق غير متاحة مؤقتًا. أعد المحاولة بعد قليل."
+                failure.message.orEmpty().contains("استجابة السوق", ignoreCase = true) ->
+                    "وصل رد غير مكتمل من خدمة السوق. أعد المحاولة."
+                else -> "تعذر الاتصال بخدمة السوق. تحقق من الإنترنت ثم أعد المحاولة."
+            }
+        } finally {
+            productsLoading = false
+        }
+    }
+
+    fun loadProfile() = viewModelScope.launch {
+        if (profileLoading) return@launch
+        profileLoading = true
+        profileError = null
+        try {
+            profile = withContext(Dispatchers.IO) { api.profile() }
+        } catch (failure: Exception) {
+            profileError = failure.message ?: "تعذر تحميل بيانات الحساب. أعد المحاولة."
+        } finally {
+            profileLoading = false
+        }
+    }
+
+    fun loadSubscriptions() = viewModelScope.launch {
+        if (subscriptionsLoading) return@launch
+        subscriptionsLoading = true
+        subscriptionsError = null
+        try {
+            subscriptions = withContext(Dispatchers.IO) { api.subscriptions() }
+        } catch (failure: Exception) {
+            subscriptionsError = failure.message ?: "تعذر تحميل الاشتراكات. أعد المحاولة."
+        } finally {
+            subscriptionsLoading = false
+        }
+    }
+
+    fun logout() {
+        api.logout()
+        loggedIn = false
+        products = emptyList()
+        productsError = null
+        profile = null
+        profileError = null
+        subscriptions = emptyList()
+        subscriptionsError = null
+        error = null
+    }
+
     fun clearError() { error = null }
 }
+
 private class AppViewModelFactory(private val api: ApiClient) : androidx.lifecycle.ViewModelProvider.Factory { override fun <T : ViewModel> create(modelClass: Class<T>): T = AppViewModel(api) as T }
 
 class MainActivity : ComponentActivity() {
@@ -194,28 +326,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable private fun ProxyPlatformApp(vm: AppViewModel) { CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { if (vm.loggedIn) MainShell(vm) else AuthScreen(vm) } } }
-@Composable private fun BrandMark() { Box(Modifier.size(56.dp).background(Brush.linearGradient(listOf(Color(0xFF4A9EFF), Color(0xFF42D5C1))), RoundedCornerShape(18.dp)), contentAlignment = Alignment.Center) { Text("P", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Black) } }
-
-@Composable private fun AuthScreen(vm: AppViewModel) {
-    var register by remember { mutableStateOf(false) }; var email by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var name by remember { mutableStateOf("") }
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) { Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.Center) { BrandMark(); Spacer(Modifier.height(20.dp)); Text("منصة البروكسي", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold); Spacer(Modifier.height(8.dp)); Text(if (register) "أنشئ حسابًا آمنًا وأدر اتصالات البروكسي الخاصة بك." else "طريقة أسرع وأسهل لتوجيه اتصالك.", color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(24.dp)); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) { TextButton(onClick = { register = false; vm.clearError() }) { Text("تسجيل الدخول", fontWeight = if (!register) FontWeight.Bold else FontWeight.Normal) }; TextButton(onClick = { register = true; vm.clearError() }) { Text("إنشاء حساب", fontWeight = if (register) FontWeight.Bold else FontWeight.Normal) } }; Spacer(Modifier.height(12.dp)); if (register) { OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("الاسم الكامل") }, singleLine = true); Spacer(Modifier.height(10.dp)) }; OutlinedTextField(email, { email = it }, Modifier.fillMaxWidth(), label = { Text("البريد الإلكتروني") }, singleLine = true); Spacer(Modifier.height(10.dp)); OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, visualTransformation = PasswordVisualTransformation(), singleLine = true); vm.error?.let { Text(it, Modifier.padding(top = 12.dp), color = if (it.startsWith("تم إنشاء الحساب")) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error) }; Spacer(Modifier.height(18.dp)); Button(onClick = { if (register) vm.register(email, password, name) { register = false } else vm.login(email, password) }, enabled = !vm.loading && email.isNotBlank() && password.length >= 8 && (!register || name.isNotBlank()), modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(15.dp)) { if (vm.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text(if (register) "إنشاء حساب" else "متابعة", fontWeight = FontWeight.Bold) }; Spacer(Modifier.height(16.dp)); Text("تُستخدم بيانات اعتمادك فقط للمصادقة مع الخدمة.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall) } }
-}
-
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-@Composable private fun MainShell(vm: AppViewModel) {
-    val context = LocalContext.current
-    var screen by remember { mutableStateOf(Screen.MARKET) }; var selectedProduct by remember { mutableStateOf<Product?>(null) }; if (selectedProduct != null) { ProductDetails(selectedProduct!!, { selectedProduct = null }); return }; LaunchedEffect(screen) { AdvancedOperationLog.info(context, "App navigation: ${screen.name}."); vm.clearError(); when (screen) { Screen.MARKET -> vm.loadProducts(); Screen.PROFILE -> vm.loadProfile(); Screen.SUBSCRIPTIONS -> vm.loadSubscriptions(); Screen.PROXY -> Unit } }
-    val title = when (screen) { Screen.MARKET -> "السوق"; Screen.SUBSCRIPTIONS -> "اشتراكاتي"; Screen.PROXY -> "بروكسي الجهاز"; Screen.PROFILE -> "ملفي الشخصي" }
-    Scaffold(containerColor = MaterialTheme.colorScheme.background, topBar = { TopAppBar(title = { Text(title, fontWeight = FontWeight.Bold) }) }, bottomBar = { NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) { NavigationBarItem(screen == Screen.MARKET, { screen = Screen.MARKET }, icon = { Text("⌂") }, label = { Text("السوق") }); NavigationBarItem(screen == Screen.SUBSCRIPTIONS, { screen = Screen.SUBSCRIPTIONS }, icon = { Text("▣") }, label = { Text("الخطط") }); NavigationBarItem(screen == Screen.PROXY, { screen = Screen.PROXY }, icon = { Text("⚡") }, label = { Text("البروكسي") }); NavigationBarItem(screen == Screen.PROFILE, { screen = Screen.PROFILE }, icon = { Text("●") }, label = { Text("الملف الشخصي") }) } }) { padding -> when (screen) { Screen.MARKET -> Marketplace(vm, padding) { selectedProduct = it }; Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding); Screen.PROXY -> ProxyScreen(padding); Screen.PROFILE -> ProfileScreen(vm, padding) } }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Proxy Screen — local proxy + embedded Wireless ADB flow
 // ─────────────────────────────────────────────────────────────────────────────
 
-@Composable private fun ProxyScreen(padding: PaddingValues) {
+@Composable internal fun ProxyScreen(padding: PaddingValues) {
     val context = LocalContext.current
-    val clipboardManager = LocalClipboardManager.current
     val locationController = remember { ProxyLocationController(context) }
     DisposableEffect(Unit) { onDispose { locationController.close() } }
 
@@ -251,9 +367,6 @@ class MainActivity : ComponentActivity() {
     var wirelessState by remember {
         mutableStateOf(WirelessDebuggingManager.DebuggingState.NOT_PAIRED)
     }
-    var operationLog by remember { mutableStateOf(emptyList<String>()) }
-    var logCopied by remember { mutableStateOf(false) }
-    var exportStatus by remember { mutableStateOf<String?>(null) }
 
     fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
@@ -364,24 +477,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    val exportLogLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/plain")
-    ) { destination ->
-        if (destination == null) {
-            exportStatus = "أُلغي اختيار مكان الحفظ."
-        } else {
-            coroutineScope.launch {
-                val result = withContext(Dispatchers.IO) {
-                    AdvancedOperationLog.export(context, destination)
-                }
-                exportStatus = result.fold(
-                    onSuccess = { "تم حفظ السجل الكامل ($it بايت)." },
-                    onFailure = { "تعذر حفظ السجل: ${it.message ?: "خطأ غير معروف"}" }
-                )
-            }
-        }
-    }
-
     LaunchedEffect(Unit) {
         runCatching { withContext(Dispatchers.IO) { profileStore.loadAll() } }
             .onSuccess { profiles ->
@@ -421,9 +516,8 @@ class MainActivity : ComponentActivity() {
     }
 
     LaunchedEffect(mode) {
-        operationLog = withContext(Dispatchers.IO) { AdvancedOperationLog.readLines(context) }
-        while (true) {
-            if (mode == "advanced") {
+        if (mode == "advanced") {
+            while (true) {
                 val newWirelessState = withContext(Dispatchers.IO) {
                     WirelessDebuggingManager.checkState(context)
                 }
@@ -431,13 +525,8 @@ class MainActivity : ComponentActivity() {
                     AdvancedOperationLog.info(context, "حالة Wireless ADB: ${newWirelessState.name}.")
                     wirelessState = newWirelessState
                 }
+                delay(1_000)
             }
-            val newLog = withContext(Dispatchers.IO) { AdvancedOperationLog.readLines(context) }
-            if (newLog != operationLog) {
-                operationLog = newLog
-                logCopied = false
-            }
-            delay(1_000)
         }
     }
 
@@ -654,66 +743,85 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    Box(Modifier.fillMaxSize().padding(padding)) {
     LazyColumn(
-        Modifier.fillMaxSize().padding(padding),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 142.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // ── Status card ──────────────────────────────────────────────────────
+        // ── Status hero ────────────────────────────────────────────────────────
         item {
             Card(
-                Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (running) SuccessGreenContainer
-                    else MaterialTheme.colorScheme.surfaceVariant
-                )
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(27.dp),
+                colors = CardDefaults.cardColors(containerColor = KunPalette.PrimaryDeep),
+                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
             ) {
-                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text(
-                        if (running) "البروكسي نشط" else if (starting) "جارٍ الاتصال…" else "جاهز للاتصال",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = if (running) OnSuccessGreenContainer else MaterialTheme.colorScheme.onSurface
-                    )
+                Column(
+                    Modifier.fillMaxWidth()
+                        .background(Brush.linearGradient(listOf(KunPalette.PrimaryDeep, KunPalette.Primary, KunPalette.Cyan)))
+                        .padding(21.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text("حالة الاتصال", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.82f))
+                            Text(
+                                when { running -> "البروكسي نشط"; starting || checkingEndpoint -> "جارٍ الاتصال…"; else -> "جاهز للاتصال" },
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = Color.White,
+                            )
+                        }
+                        FeaturePill(
+                            if (running) "متصل" else if (starting || checkingEndpoint) "قيد الاتصال" else "غير متصل",
+                            color = Color.White,
+                            container = Color.White.copy(alpha = 0.16f),
+                        )
+                    }
                     Text(
                         when {
                             mode == "vpn" && running -> "يتم توجيه حركة مرور الجهاز عبر نفق VPN."
-                            mode == "vpn" -> "وضع اللمسة الواحدة — يظهر مربع إذن VPN القياسي في Android فقط."
+                            mode == "vpn" -> "اتصال مباشر بنقرة واحدة مع نافذة إذن Android القياسية."
                             running -> "إعداد بروكسي النظام نشط للتطبيقات المتوافقة؛ قد تتجاوزه بعض التطبيقات."
-                            else -> "الوضع المتقدم — لا تظهر أيقونة مفتاح VPN، ويستخدم ADB المضمّن داخل التطبيق."
+                            else -> "الوضع المتقدم يستخدم ADB المضمّن ولا يعرض أيقونة VPN."
                         },
-                        color = if (running) OnSuccessGreenContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.88f),
                     )
                 }
             }
         }
 
-        // ── Mode selector ────────────────────────────────────────────────────
+        // ── Connection mode ────────────────────────────────────────────────────
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("وضع الاتصال", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
+            Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("طريقة الاتصال", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    ModeOptionCard(
+                        title = "VPN",
+                        subtitle = "إعداد سريع ومُوصى به",
                         selected = mode == "vpn",
-                        onClick = { if (!running && !starting && !checkingEndpoint) { mode = "vpn"; error = null } },
-                        label = { Text("VPN بلمسة واحدة (موصى به)") },
-                        enabled = !running && !starting && !checkingEndpoint
+                        enabled = !running && !starting && !checkingEndpoint,
+                        modifier = Modifier.weight(1f),
+                        onClick = { mode = "vpn"; error = null },
                     )
-                    FilterChip(
+                    ModeOptionCard(
+                        title = "متقدم",
+                        subtitle = "بروكسي النظام عبر ADB",
                         selected = mode == "advanced",
-                        onClick = { if (!running && !starting && !checkingEndpoint) { mode = "advanced"; error = null } },
-                        label = { Text("متقدم: بدون أيقونة VPN") },
-                        enabled = !running && !starting && !checkingEndpoint
+                        enabled = !running && !starting && !checkingEndpoint,
+                        modifier = Modifier.weight(1f),
+                        onClick = { mode = "advanced"; error = null },
                     )
                 }
                 Text(
                     if (mode == "vpn")
-                        "اضغط «اتصال» ووافق على مربع حوار نظام Android الوحيد — دون خيارات مطوّر أو تطبيقات إضافية."
+                        "اضغط اتصال ووافق على نافذة Android الوحيدة — من دون إعدادات مطوّر أو تطبيقات إضافية."
                     else
-                        "يبقي الاتصال خارج مؤشر VPN في Android، مع إعداد التصحيح اللاسلكي مرة واحدة.",
+                        "يتطلب إعداد التصحيح اللاسلكي مرة واحدة، ويعمل مع التطبيقات التي تحترم بروكسي النظام.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
@@ -730,25 +838,30 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // ── Connection details ───────────────────────────────────────────────
-        item { Text("تفاصيل الاتصال", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+        // ── Connection details ────────────────────────────────────────────────
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(protocol == "socks5", { protocol = "socks5" }, label = { Text("SOCKS5") }, enabled = !running && !starting && !checkingEndpoint)
-                FilterChip(protocol == "http", { protocol = "http" }, label = { Text("HTTP") }, enabled = !running && !starting && !checkingEndpoint)
+            KUNCard {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                    Text("بيانات البروكسي", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("اختر بروتوكول الاتصال وأدخل بيانات الخادم.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(protocol == "socks5", { protocol = "socks5" }, label = { Text("SOCKS5") }, enabled = !running && !starting && !checkingEndpoint)
+                        FilterChip(protocol == "http", { protocol = "http" }, label = { Text("HTTP") }, enabled = !running && !starting && !checkingEndpoint)
+                    }
+                    OutlinedTextField(host, { host = it }, Modifier.fillMaxWidth(), label = { Text("مضيف البروكسي أو عنوان IP") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint, shape = RoundedCornerShape(15.dp))
+                    OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.fillMaxWidth(), label = { Text("المنفذ") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint, shape = RoundedCornerShape(15.dp), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(auth, { auth = it }, enabled = !running && !starting && !checkingEndpoint)
+                        Text("البروكسي يتطلب مصادقة", style = MaterialTheme.typography.bodyMedium)
+                    }
+                    AnimatedVisibility(visible = auth) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint, shape = RoundedCornerShape(15.dp))
+                            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !running && !starting && !checkingEndpoint, shape = RoundedCornerShape(15.dp))
+                        }
+                    }
+                }
             }
-        }
-        item { OutlinedTextField(host, { host = it }, Modifier.fillMaxWidth(), label = { Text("مضيف البروكسي أو عنوان IP") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint) }
-        item { OutlinedTextField(port, { port = it.filter(Char::isDigit) }, Modifier.fillMaxWidth(), label = { Text("المنفذ") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint) }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.material3.Checkbox(auth, { auth = it }, enabled = !running && !starting && !checkingEndpoint)
-                Text("البروكسي يتطلب مصادقة")
-            }
-        }
-        if (auth) {
-            item { OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, enabled = !running && !starting && !checkingEndpoint) }
-            item { OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, visualTransformation = PasswordVisualTransformation(), singleLine = true, enabled = !running && !starting && !checkingEndpoint) }
         }
 
         // ── Advanced proxy setup (embedded Wireless ADB)
@@ -872,34 +985,12 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        item {
-            AdvancedOperationLogPanel(
-                lines = operationLog,
-                copied = logCopied,
-                exportStatus = exportStatus,
-                exportPath = AdvancedOperationLog.adbPullPath(context),
-                onCopy = {
-                    coroutineScope.launch {
-                        val completeLog = withContext(Dispatchers.IO) {
-                            AdvancedOperationLog.readLines(context)
-                        }
-                        clipboardManager.setText(AnnotatedString(completeLog.joinToString("\n")))
-                        operationLog = completeLog
-                        logCopied = true
-                    }
-                },
-                onExport = {
-                    AdvancedOperationLog.info(context, "طلب المستخدم حفظ نسخة من السجل الكامل عبر منتقي الملفات.")
-                    exportStatus = "اختر مكان الحفظ…"
-                    exportLogLauncher.launch("advanced-operation-${System.currentTimeMillis()}.log")
-                }
-            )
-        }
+
 
         // ── Mock location ────────────────────────────────────────────────────
         item {
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            KUNCard {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Text("موقع وهمي اختياري", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Text("يتطلب Android اختيار هذا التطبيق من خيارات المطوّر.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -921,9 +1012,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // ── Error display ────────────────────────────────────────────────────
-        item { error?.let { Text(it, color = MaterialTheme.colorScheme.error) } }
-
         if (mode == "advanced" && !running && !starting &&
             AdvancedSystemProxy.hasPendingRestore(context)
         ) item {
@@ -941,52 +1029,52 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // ── Connect / Disconnect button ──────────────────────────────────────
-        item {
-            if (running) {
-                Button(
-                    onClick = { stopProxy() },
-                    enabled = !stopping,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(15.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text(
-                        when {
-                            stopping -> "جارٍ استعادة إعدادات البروكسي…"
-                            mode == "vpn" -> "قطع اتصال VPN"
-                            else -> "إيقاف البروكسي"
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            } else {
-                val hasDetails = host.isNotBlank() && port.isNotBlank()
-                val canConnect = hasDetails && (mode == "vpn" || wirelessState == WirelessDebuggingManager.DebuggingState.READY)
-                Button(
-                    onClick = ::requestStart,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    enabled = !starting && !checkingEndpoint && canConnect,
-                    shape = RoundedCornerShape(15.dp)
-                ) {
-                    if (starting || checkingEndpoint) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    else Text(if (mode == "vpn") "اتصال" else "بدء بروكسي الجهاز", fontWeight = FontWeight.Bold)
+    }
+
+    val hasDetails = host.isNotBlank() && port.isNotBlank()
+    val canConnect = hasDetails && (mode == "vpn" || wirelessState == WirelessDebuggingManager.DebuggingState.READY)
+    Surface(
+        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().imePadding(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        shadowElevation = 12.dp,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 11.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            AnimatedVisibility(visible = error != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(13.dp)) {
+                    Text(error.orEmpty(), Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall, maxLines = 3)
                 }
             }
+            Button(
+                onClick = { if (running) stopProxy() else requestStart() },
+                enabled = if (running) !stopping else !starting && !checkingEndpoint && !stopping && canConnect,
+                modifier = Modifier.fillMaxWidth().height(54.dp),
+                shape = RoundedCornerShape(17.dp),
+                colors = if (running) ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error) else ButtonDefaults.buttonColors(),
+            ) {
+                if (starting || checkingEndpoint || stopping) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+                } else {
+                    Text(
+                        when { running && mode == "vpn" -> "قطع اتصال VPN"; running -> "إيقاف البروكسي"; mode == "vpn" -> "اتصال"; else -> "بدء بروكسي الجهاز" },
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(8.dp).background(if (running) SuccessGreen else if (starting || checkingEndpoint || stopping) KunPalette.Warning else KunPalette.Muted.copy(alpha = 0.55f), CircleShape))
+                Text(
+                    when { running -> "متصل"; checkingEndpoint -> "جارٍ فحص إمكانية الوصول إلى الخادم…"; starting -> if (mode == "vpn") "بانتظار إذن Android…" else "جارٍ تشغيل البروكسي المحلي…"; stopping -> "جارٍ استعادة الاتصال المباشر…"; else -> "غير متصل" },
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (running) SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
-
-        // ── Status text ──────────────────────────────────────────────────────
-        item {
-            Text(
-                when {
-                    running -> "متصل"
-                    checkingEndpoint -> "جارٍ فحص إمكانية الوصول إلى خادم البروكسي…"
-                    starting -> if (mode == "vpn") "بانتظار منح Android إذن VPN…" else "بانتظار تشغيل البروكسي المحلي…"
-                    else -> "غير متصل"
-                },
-                color = if (running) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+    }
     }
 }
 
@@ -999,39 +1087,61 @@ class MainActivity : ComponentActivity() {
     content: @Composable () -> Unit
 ) {
     Card(
-        Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isComplete) SuccessGreenContainer.copy(alpha = 0.3f)
-            else MaterialTheme.colorScheme.surfaceVariant
-        )
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, if (isComplete) KunPalette.Success.copy(alpha = 0.35f) else KunPalette.Border),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(
-                    Modifier.size(28.dp).background(
-                        if (isComplete) SuccessGreen else MaterialTheme.colorScheme.primary,
-                        CircleShape
-                    ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        if (isComplete) "✓" else stepNumber.toString(),
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.labelMedium
-                    )
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(
+                        Modifier.size(34.dp).background(if (isComplete) SuccessGreen else MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(if (isComplete) "✓" else stepNumber.toString(), color = if (isComplete) Color.White else MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
-                Column {
-                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                FeaturePill(
+                    statusText,
+                    color = if (isComplete) KunPalette.Success else KunPalette.Primary,
+                    container = if (isComplete) KunPalette.SuccessSoft else MaterialTheme.colorScheme.primaryContainer,
+                )
             }
-            AnimatedVisibility(
-                visible = !isComplete,
-                enter = fadeIn() + expandVertically(),
-                exit = fadeOut() + shrinkVertically()
-            ) { content() }
+            AnimatedVisibility(visible = !isComplete, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                Column { content() }
+            }
+        }
+    }
+}
+
+@Composable private fun ModeOptionCard(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(19.dp)
+    Card(
+        modifier = modifier.clickable(enabled = enabled, onClick = onClick),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.45f) else KunPalette.Border),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (selected) 2.dp else 0.dp),
+    ) {
+        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                if (selected) Text("✓", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
+            }
+            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -1056,6 +1166,7 @@ private fun SavedProxyManagerCard(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, KunPalette.Border),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1165,14 +1276,3 @@ private fun startLocalProxyService(context: Context, protocol: String, host: Str
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Marketplace, Subscriptions, Profile — unchanged from original
-// ─────────────────────────────────────────────────────────────────────────────
-
-@Composable private fun Marketplace(vm: AppViewModel, padding: PaddingValues, onProductClick: (Product) -> Unit) { var featured by remember { mutableStateOf(false) }; val visible = vm.products.filter { !featured || it.featured }; LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { item { Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp)) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { Text("اعثر على مسارك المثالي", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("خطط بروكسي موثوقة مع مواقع وبروتوكولات وأسعار واضحة.", color = MaterialTheme.colorScheme.onSurfaceVariant); Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) { Text(vm.products.size.toString() + " خطط متاحة", color = MaterialTheme.colorScheme.secondary); FilterChip(featured, { featured = !featured }, label = { Text("مميز") }) } } } }; if (visible.isEmpty()) item { Text("لا توجد خطط متاحة حاليًا", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }; items(visible) { ProductCard(it, onProductClick) } } }
-@Composable private fun ProductCard(p: Product, onClick: (Product) -> Unit) { Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp)) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text(p.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); if (p.featured) Text("مميز", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelSmall) }; Text(p.description.ifBlank { "مسار بروكسي موثوق لاتصالك اليومي." }, color = MaterialTheme.colorScheme.onSurfaceVariant); Text(p.country + " • " + p.city); Text(p.protocol + " • " + p.ipType, color = MaterialTheme.colorScheme.secondary); Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column { Text(p.daily, style = MaterialTheme.typography.bodySmall); Text(p.monthly, fontWeight = FontWeight.Bold) }; Button(onClick = { onClick(p) }) { Text("عرض التفاصيل") } } } } }
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
-@Composable private fun ProductDetails(p: Product, onBack: () -> Unit) { Scaffold(topBar = { TopAppBar(title = { Text(p.name) }, navigationIcon = { TextButton(onClick = onBack) { Text("رجوع") } }) }) { padding -> Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { Text(p.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text(p.description, style = MaterialTheme.typography.bodyLarge); Text("الموقع: " + p.country + ", " + p.city); Text("البروتوكول: " + p.protocol); Text("النوع: " + p.ipType); Text("يوميًا: " + p.daily); Text("شهريًا: " + p.monthly); Button(onClick = {}, modifier = Modifier.fillMaxWidth()) { Text("شراء الخطة") } } } }
-@Composable private fun Subscriptions(vm: AppViewModel, padding: PaddingValues) { LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { item { Text("خططك", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }; if (vm.subscriptions.isEmpty()) item { Text("لا توجد اشتراكات نشطة حتى الآن.", color = MaterialTheme.colorScheme.onSurfaceVariant) }; items(vm.subscriptions) { s -> Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) { Text(s.product, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); Text(s.protocol + " • " + s.status); Text("تنتهي في: " + s.expires, color = MaterialTheme.colorScheme.onSurfaceVariant) } } } } }
-@Composable private fun ProfileScreen(vm: AppViewModel, padding: PaddingValues) { Column(Modifier.fillMaxSize().padding(padding).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { Text("الحساب", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); vm.profile?.let { p -> Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) { Text(p.name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text(p.email, color = MaterialTheme.colorScheme.onSurfaceVariant); Text("الدور: " + p.role); Text(if (p.verified) "تم التحقق من البريد الإلكتروني" else "بانتظار التحقق من البريد الإلكتروني", color = if (p.verified) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error) } } }; Button(onClick = { vm.logout() }, modifier = Modifier.fillMaxWidth()) { Text("تسجيل الخروج") } } }
