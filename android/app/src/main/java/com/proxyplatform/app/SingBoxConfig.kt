@@ -124,7 +124,12 @@ object SingBoxConfig {
                 .put("rules", JSONArray().put(JSONObject()
                     .put("port", 53)
                     .put("action", "hijack-dns")))
-                .put("auto_detect_interface", true)
+                // sing-box's generic auto_detect_interface is not supported
+                // on Android. The VpnService adapter protects sing-box's
+                // outbound sockets through autoDetectInterfaceControl instead.
+                // Enabling auto-detection here made DNS fail with
+                // "no available network interface" on real Android devices.
+                .put("auto_detect_interface", false)
                 .put("final", "proxy"))
 
         return File(context.filesDir, TUN_CONFIG_FILE).also {

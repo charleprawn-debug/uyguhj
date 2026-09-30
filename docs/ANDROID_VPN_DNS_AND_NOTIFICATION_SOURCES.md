@@ -9,6 +9,10 @@ Sources checked for the KUN Proxy VPN and advanced-pairing work:
 - sing-box, **Route Rule**: https://sing-box.sagernet.org/configuration/route/rule/
   - Provides the route-rule schema for applying DNS interception before the final proxy route.
 - sing-box, **TUN inbound**: https://sing-box.sagernet.org/configuration/inbound/tun/
-  - `auto_route` installs default routes; `auto_detect_interface` (or an explicit underlying interface) is needed to avoid outbound proxy traffic looping into the tunnel. Newer options such as `dns_mode` have documented version requirements, so the embedded `libbox.aar` version must be considered before using them.
+  - `auto_route` installs routes for TUN traffic. The embedded `libbox.aar` version must be considered before using newer options such as `dns_mode`.
+- sing-box, **Route**: https://sing-box.sagernet.org/configuration/route/
+  - The current route reference limits generic `auto_detect_interface` to Linux, Windows, and macOS. It is disabled in KUN Proxy's Android VPN configuration.
+- sing-box for Android, **VPNService**: https://github.com/SagerNet/sing-box-for-android/blob/dev/app/src/main/java/io/nekohasekai/sfa/bg/VPNService.kt
+  - The upstream Android client protects sing-box outbound sockets through `VpnService.protect(fd)` in `autoDetectInterfaceControl`; KUN Proxy follows that Android platform mechanism to keep upstream sockets outside its own VPN.
 
 These sources are implementation references, not a guarantee that a particular upstream proxy accepts the configured protocol or credentials; the app should test the upstream handshake before enabling full-device routing.

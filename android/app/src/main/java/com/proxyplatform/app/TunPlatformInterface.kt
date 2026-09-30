@@ -1,6 +1,7 @@
 package com.proxyplatform.app
 
 import io.nekohasekai.libbox.*
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Platform interface for the one-tap VPN connection mode.
@@ -12,8 +13,16 @@ import io.nekohasekai.libbox.*
  * required is Android's single, built-in "Connection request" system dialog.
  */
 class TunPlatformInterface(private val service: ProxyVpnService) : PlatformInterface {
+    private val protectFailureLogged = AtomicBoolean(false)
+
     override fun autoDetectInterfaceControl(fd: Int) {
-        runCatching { service.protect(fd) }
+        val protected = runCatching { service.protect(fd) }.getOrDefault(false)
+        if (!protected && protectFailureLogged.compareAndSet(false, true)) {
+            AdvancedOperationLog.error(
+                service,
+                "Android لم يتمكن من حماية اتصال sing-box الخارجي من الرجوع إلى واجهة VPN."
+            )
+        }
     }
     override fun openTun(options: TunOptions): Int = service.establishTun(options)
     override fun includeAllNetworks() = false
