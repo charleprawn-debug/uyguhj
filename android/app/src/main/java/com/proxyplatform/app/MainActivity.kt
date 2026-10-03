@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
@@ -70,7 +69,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -82,6 +80,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.ViewModel
 import com.proxyplatform.app.adb.PairingCodeInput
 import androidx.lifecycle.viewModelScope
@@ -358,13 +357,32 @@ class MainActivity : ComponentActivity() {
     var checkingEndpoint by remember { mutableStateOf(false) }
     var stopping by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var mockLocation by remember { mutableStateOf(false) }
+    var mockLocation by remember {
+        mutableStateOf(
+            context.getSharedPreferences("mock_location_options", Context.MODE_PRIVATE)
+                .getBoolean("enabled", false)
+        )
+    }
     var locationMode by remember { mutableStateOf("auto") }
     var latitude by remember { mutableStateOf("") }
     var longitude by remember { mutableStateOf("") }
+    var mockLocationAuthorized by remember { mutableStateOf<Boolean?>(null) }
+    var mockLocationStatus by remember {
+        mutableStateOf(
+            if (mockLocation) "اضغط التحقق لاختيار التطبيق قبل الاتصال." else "غير مفعّل"
+        )
+    }
+    var resumeStartAfterCoarsePermission by remember { mutableStateOf(false) }
+    var matchProxyTimezone by remember {
+        mutableStateOf(
+            context.getSharedPreferences("advanced_proxy_timezone_options", Context.MODE_PRIVATE)
+                .getBoolean("enabled", false)
+        )
+    }
     var wirelessState by remember {
         mutableStateOf(WirelessDebuggingManager.DebuggingState.NOT_PAIRED)
     }
+    var showPairingNotificationOnGrant by remember { mutableStateOf(false) }
 
     fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
@@ -373,26 +391,33 @@ class MainActivity : ComponentActivity() {
         ) == PackageManager.PERMISSION_GRANTED
     }
 
-    // Permission requests are asynchronous: launch() returns immediately, and
-    // the actual grant/deny result only arrives later in this callback. Code
-    // that needs the permission for something specific (like posting the ADB
-    // pairing notification) must act *here*, once it's actually granted — not
-    // right after calling launch(), since at that point it usually isn't
-    // granted yet. This gap is what previously made the pairing notification
-    // silently fail to appear on a fresh install: the button asked for the
-    // permission and posted the notification in the same instant, so the post
-    // always ran before the user had answered the permission dialog.
-    var showPairingNotificationOnGrant by remember { mutableStateOf(false) }
-
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        if (granted && showPairingNotificationOnGrant) {
-            WirelessDebuggingManager.showPairingNotification(context)
+        if (showPairingNotificationOnGrant && granted) {
+            if (!NotificationManagerCompat.from(context).areNotificationsEnabled() ||
+                !WirelessDebuggingManager.showPairingNotification(context)
+            ) {
+                error = "الإشعارات متوقفة لهذا التطبيق؛ أدخل رمز الاقتران يدويًا من التطبيق."
+            }
+        } else if (showPairingNotificationOnGrant) {
+            error = "لم يُمنح إذن الإشعارات؛ أدخل رمز الاقتران يدويًا من التطبيق."
         }
         showPairingNotificationOnGrant = false
-        // If denied, the tunnel still works — it just hides the status/pairing
-        // notification and the user falls back to the in-app pairing field.
+    }
+
+    val coarseLocationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            mockLocationStatus = "تم منح إذن الموقع التقريبي اللازم لخدمات Google؛ جارٍ استكمال الاتصال…"
+            error = null
+            resumeStartAfterCoarsePermission = true
+        } else {
+            resumeStartAfterCoarsePermission = false
+            mockLocationStatus = "يلزم إذن الموقع التقريبي كي تستقبل خدمات Google إحداثيات الموقع الوهمي."
+            error = "لم يُمنح إذن الموقع التقريبي؛ لم يبدأ الاتصال ولم نقرأ موقعك الحقيقي."
+        }
     }
 
     // Best-effort request used by the plain VPN/local-proxy status notification.
@@ -402,21 +427,72 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Gets the ADB pairing notification on screen: immediately if permission
-    // is already granted, or as soon as the user grants it via the callback
-    // above. Safe to call as many times as needed (e.g. automatically).
     fun ensurePairingNotification() {
         if (hasNotificationPermission()) {
-            WirelessDebuggingManager.showPairingNotification(context)
+            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+                error = "إشعارات التطبيق متوقفة من إعدادات Android؛ استخدم إدخال الرمز اليدوي أو فعّل الإشعارات."
+            } else if (!WirelessDebuggingManager.showPairingNotification(context)) {
+                error = "تعذر عرض إشعار الاقتران؛ استخدم إدخال الرمز اليدوي."
+            }
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             showPairingNotificationOnGrant = true
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            error = "تعذر عرض الإشعار؛ استخدم إدخال رمز الاقتران اليدوي."
         }
     }
 
-    // Wireless debugging state is rendered in the advanced setup card below.
+    fun openDeveloperOptions() {
+        runCatching {
+            context.startActivity(WirelessDebuggingManager.getDebuggingSettingsIntent(context))
+        }.onFailure {
+            error = ProxyFailureMessages.settingsPage("خيارات المطوّر")
+        }
+    }
 
     val coroutineScope = rememberCoroutineScope()
+
+    val mockLocationSettingsLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        if (mockLocation) {
+            mockLocationStatus = "جارٍ التحقق من صلاحية الموقع الوهمي…"
+            coroutineScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    locationController.checkMockLocationAccess()
+                }
+                mockLocationAuthorized = result.isSuccess
+                val cause = result.exceptionOrNull()
+                mockLocationStatus = when {
+                    result.isSuccess -> "تم اختيار التطبيق؛ صلاحية الموقع الوهمي جاهزة."
+                    cause is SecurityException -> "لم يتم اختيار التطبيق بعد. اختر Proxy Platform ثم ارجع إلى التطبيق."
+                    else -> "تعذر التحقق من إعداد الموقع الوهمي؛ راجع سبب المشكلة أدناه."
+                }
+                if (result.isFailure) {
+                    error = ProxyFailureMessages.mockLocation(
+                        if (cause is SecurityException) "mock location app not selected: ${cause.message.orEmpty()}"
+                        else cause?.message
+                    )
+                    AdvancedOperationLog.exception(
+                        context,
+                        "فشل التحقق من اختيار Proxy Platform كتطبيق موقع وهمي",
+                        cause ?: IllegalStateException("App-op غير متاح"),
+                    )
+                }
+            }
+        }
+    }
+
+    fun openMockLocationSettings() {
+        error = null
+        runCatching {
+            mockLocationSettingsLauncher.launch(
+                Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)
+            )
+        }.onFailure {
+            error = ProxyFailureMessages.settingsPage("خيارات المطوّر ثم اختيار تطبيق الموقع الوهمي")
+        }
+    }
 
     fun selectProxyProfile(profile: SavedProxy) {
         if (running || starting || stopping) return
@@ -429,7 +505,7 @@ class MainActivity : ComponentActivity() {
         password = profile.password
         coroutineScope.launch {
             runCatching { withContext(Dispatchers.IO) { profileStore.select(profile.id) } }
-                .onFailure { error = "تعذر حفظ اختيار البروكسي: ${it.message ?: "خطأ في قاعدة البيانات"}" }
+                .onFailure { error = ProxyFailureMessages.savedProxy(it.message, "حفظ اختيار البروكسي") }
         }
     }
 
@@ -451,7 +527,7 @@ class MainActivity : ComponentActivity() {
                 password = saved.password
                 error = null
                 AdvancedOperationLog.output(context, "حُفظ إعداد بروكسي محليًا في قاعدة البيانات المشفرة.")
-            }.onFailure { error = it.message ?: "تعذر حفظ البروكسي. تحقق من المعلومات وحاول مجددًا." }
+            }.onFailure { error = ProxyFailureMessages.savedProxy(it.message, "حفظ البروكسي") }
         }
     }
 
@@ -472,11 +548,14 @@ class MainActivity : ComponentActivity() {
                     selectedSavedProxyId = null
                     host = ""; port = ""; username = ""; password = ""; auth = false
                 }
-            }.onFailure { error = it.message ?: "تعذر حذف البروكسي المحفوظ." }
+            }.onFailure { error = ProxyFailureMessages.savedProxy(it.message, "حذف البروكسي المحفوظ") }
         }
     }
 
     LaunchedEffect(Unit) {
+        if (!ProxyVpnService.isRunning(context) && !ProxyLocalService.isRunning(context)) {
+            ProxyLocationController.recoverStaleFusedMockMode(context)
+        }
         runCatching { withContext(Dispatchers.IO) { profileStore.loadAll() } }
             .onSuccess { profiles ->
                 savedProxies = profiles
@@ -492,23 +571,29 @@ class MainActivity : ComponentActivity() {
                 }
             }
             .onFailure {
-                error = "تعذر فتح قاعدة بيانات البروكسيات المحفوظة: ${it.message ?: "تعذر فك التشفير"}"
+                error = ProxyFailureMessages.savedProxy(it.message, "فتح قاعدة بيانات البروكسيات المحفوظة")
                 AdvancedOperationLog.error(context, "تعذر تحميل بيانات اعتماد البروكسي المشفرة.")
             }
-        if (!ProxyLocalService.isRunning(context) && AdvancedSystemProxy.hasPendingRestore(context)) {
-            AdvancedOperationLog.info(context, "اكتشاف جلسة متقدمة سابقة؛ محاولة استعادة بروكسي النظام.")
-            val restoreResult = withContext(Dispatchers.IO) {
+        if (!ProxyLocalService.isRunning(context) &&
+            (AdvancedSystemProxy.hasPendingRestore(context) ||
+                AdvancedProxyTimezoneController.hasPendingRestore(context))
+        ) {
+            AdvancedOperationLog.info(context, "اكتشاف جلسة متقدمة سابقة؛ محاولة استعادة المنطقة الزمنية والبروكسي.")
+            val timezoneRestore = withContext(Dispatchers.IO) {
+                AdvancedProxyTimezoneController.restore(context)
+            }
+            val proxyRestore = withContext(Dispatchers.IO) {
                 AdvancedSystemProxy.restore(
                     context,
                     "127.0.0.1:${ProxyLocalService.localPort(context)}"
                 )
             }
-            if (restoreResult.isFailure) {
+            if (timezoneRestore.isFailure || proxyRestore.isFailure) {
                 AdvancedOperationLog.error(context, "تعذرت استعادة الجلسة السابقة تلقائيًا؛ يلزم اتصال ADB.")
-                error = "تعذر استعادة إعدادات البروكسي السابقة: " +
-                    (restoreResult.exceptionOrNull()?.message ?: "تحقق من اتصال ADB.")
+                val failure = timezoneRestore.exceptionOrNull() ?: proxyRestore.exceptionOrNull()
+                error = ProxyFailureMessages.advancedRestore(failure?.message)
             } else {
-                AdvancedOperationLog.info(context, "اكتملت معالجة إعدادات الجلسة السابقة.")
+                AdvancedOperationLog.info(context, "اكتملت معالجة استعادة الجلسة السابقة.")
                 mode = "vpn"
             }
         }
@@ -516,18 +601,9 @@ class MainActivity : ComponentActivity() {
 
     LaunchedEffect(mode) {
         if (mode == "advanced") {
-            var pairingPromptRequested = false
             while (true) {
                 val newWirelessState = withContext(Dispatchers.IO) {
                     WirelessDebuggingManager.checkState(context)
-                }
-                if (!pairingPromptRequested && (
-                        newWirelessState == WirelessDebuggingManager.DebuggingState.NOT_PAIRED ||
-                            newWirelessState == WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED
-                        )
-                ) {
-                    pairingPromptRequested = true
-                    ensurePairingNotification()
                 }
                 if (newWirelessState != wirelessState) {
                     AdvancedOperationLog.info(context, "حالة Wireless ADB: ${newWirelessState.name}.")
@@ -539,11 +615,46 @@ class MainActivity : ComponentActivity() {
     }
 
     fun startLocation() {
-        if (!mockLocation) return
+        if (!mockLocation) {
+            mockLocationStatus = "غير مفعّل"
+            return
+        }
+        mockLocationStatus = "جارٍ تحديد الموقع وتفعيله…"
+        val onStatus: (Result<Pair<Double, Double>>) -> Unit = { result ->
+            coroutineScope.launch(Dispatchers.Main.immediate) {
+                result.fold(
+                    onSuccess = { coordinates ->
+                        mockLocationAuthorized = true
+                        mockLocationStatus = "موقع الخرائط الوهمي فعّال (Fused) — ${"%.4f".format(coordinates.first)}, ${"%.4f".format(coordinates.second)}."
+                    },
+                    onFailure = { failure ->
+                        if (failure is SecurityException) mockLocationAuthorized = false
+                        mockLocationStatus = if (failure is SecurityException) {
+                            "Android لم يعتمد اختيار التطبيق؛ افتح خيارات المطوّر واختر Proxy Platform."
+                        } else {
+                            "تعذر إرسال الإحداثيات؛ راجع سبب المشكلة وخطوات الإصلاح أدناه."
+                        }
+                        AdvancedOperationLog.exception(context, "تعذر تشغيل/تحديث الموقع الوهمي", failure)
+                        error = ProxyFailureMessages.mockLocation(
+                            if (failure is SecurityException) "mock location app not selected: ${failure.message.orEmpty()}"
+                            else "${failure.javaClass.simpleName}: ${failure.message.orEmpty()}"
+                        )
+                    },
+                )
+            }
+        }
         runCatching {
-            if (locationMode == "auto") locationController.startAuto(protocol, host, port.toInt(), username, password)
-            else locationController.startManual(latitude.toDouble(), longitude.toDouble())
-        }.onFailure { error = "بدأ البروكسي، لكن تعذر تشغيل الموقع الوهمي." }
+            if (locationMode == "auto") {
+                val localPort = if (mode == "advanced") {
+                    ProxyLocalService.localPort(context)
+                } else {
+                    ProxyVpnService.MOCK_LOCATION_PROXY_PORT
+                }
+                locationController.startAutoThroughLocalProxy(localPort, onStatus)
+            } else {
+                locationController.startManual(latitude.toDouble(), longitude.toDouble(), onStatus)
+            }
+        }.onFailure { onStatus(Result.failure(it)) }
     }
 
     // ── Advanced mode: local proxy + embedded Wireless ADB ─────────────
@@ -561,9 +672,9 @@ class MainActivity : ComponentActivity() {
             AdvancedOperationLog.info(context, "إرسال طلب تشغيل خدمة البروكسي المحلي إلى Android.")
             startLocalProxyService(context, protocol, host, port, username, password)
         }.onFailure {
-            AdvancedOperationLog.error(context, "تعذر إرسال طلب تشغيل الخدمة: ${it.message ?: it.javaClass.simpleName}")
+            AdvancedOperationLog.exception(context, "تعذر إرسال طلب تشغيل خدمة البروكسي", it)
             starting = false
-            error = it.message ?: "تعذر تشغيل خدمة البروكسي المحلي."
+            error = ProxyFailureMessages.fromThrowable(advanced = true, failure = it)
             return
         }
 
@@ -590,14 +701,35 @@ class MainActivity : ComponentActivity() {
                     )
                 } else {
                     val expectedProxy = "127.0.0.1:${ProxyLocalService.localPort(context)}"
+                    val proxyTimezone = if (matchProxyTimezone) {
+                        runCatching {
+                            locationController.fetchProxyTimezone(ProxyLocalService.localPort(context))
+                        }.getOrElse {
+                            AdvancedOperationLog.exception(context, "فشل اكتشاف المنطقة الزمنية عبر مخرج sing-box المحلي", it)
+                            return@withContext Result.failure(it)
+                        }
+                    } else {
+                        null
+                    }
                     AdvancedOperationLog.info(context, "أصبح المنفذ المحلي جاهزًا؛ بدء ضبط بروكسي نظام Android.")
-                    val result = AdvancedSystemProxy.apply(context, expectedProxy)
+                    val proxyResult = AdvancedSystemProxy.apply(context, expectedProxy)
+                    val result = if (proxyResult.isFailure || proxyTimezone == null) {
+                        proxyResult
+                    } else {
+                        AdvancedProxyTimezoneController.apply(context, proxyTimezone)
+                    }
                     if (result.isSuccess &&
                         (!ProxyLocalService.isRunning(context) || !ProxyLocalService.isListenerReady(context))
                     ) {
                         AdvancedOperationLog.error(context, "توقفت الخدمة أو المنفذ أثناء تطبيق إعداد النظام.")
-                        AdvancedSystemProxy.restore(context, expectedProxy)
-                        Result.failure(IllegalStateException("توقفت خدمة البروكسي أثناء إعداد النظام."))
+                        val timezoneRestore = AdvancedProxyTimezoneController.restore(context)
+                        val proxyRestore = AdvancedSystemProxy.restore(context, expectedProxy)
+                        val failure = timezoneRestore.exceptionOrNull() ?: proxyRestore.exceptionOrNull()
+                        Result.failure(
+                            IllegalStateException(
+                                failure?.message ?: "توقفت خدمة البروكسي أثناء إعداد النظام."
+                            )
+                        )
                     } else {
                         result
                     }
@@ -610,19 +742,15 @@ class MainActivity : ComponentActivity() {
                 starting = false
                 startLocation()
             } else {
-                AdvancedOperationLog.error(
-                    context,
-                    "فشل تشغيل الوضع المتقدم: ${setupResult.exceptionOrNull()?.message ?: "سبب غير معروف"}"
-                )
+                setupResult.exceptionOrNull()?.let {
+                    AdvancedOperationLog.exception(context, "فشل تشغيل الوضع المتقدم", it)
+                }
                 val restoreResult = withContext(Dispatchers.IO) {
-                    if (AdvancedSystemProxy.hasPendingRestore(context)) {
-                        AdvancedSystemProxy.restore(
-                            context,
-                            "127.0.0.1:${ProxyLocalService.localPort(context)}"
-                        )
-                    } else {
-                        Result.success(Unit)
-                    }
+                    val timezoneRestore = AdvancedProxyTimezoneController.restore(context)
+                    val proxyRestore = if (AdvancedSystemProxy.hasPendingRestore(context)) {
+                        AdvancedSystemProxy.restore(context, "127.0.0.1:${ProxyLocalService.localPort(context)}")
+                    } else Result.success(Unit)
+                    if (timezoneRestore.isFailure) timezoneRestore else proxyRestore
                 }
                 if (restoreResult.isSuccess) {
                     AdvancedOperationLog.info(context, "اكتملت معالجة الاستعادة؛ إيقاف الخدمة المحلية.")
@@ -635,10 +763,10 @@ class MainActivity : ComponentActivity() {
                 }
                 starting = false
                 val cause = setupResult.exceptionOrNull()
-                error = "تعذر تشغيل الوضع المتقدم: ${cause?.message ?: "تحقق من اتصال ADB"}"
+                error = ProxyFailureMessages.connection(advanced = true, details = cause?.message)
                 if (restoreResult.isFailure) {
                     AdvancedOperationLog.error(context, "فشلت الاستعادة؛ أُبقيت الخدمة المحلية لتفادي انقطاع المرور.")
-                    error += " تعذر استعادة إعدادات النظام تلقائيًا؛ لم نوقف الخدمة حتى لا ينقطع الاتصال."
+                    error += "\nتنبيه: لم تكتمل الاستعادة، لذلك أبقينا البروكسي نشطًا لتجنّب قطع المرور. أعد اتصال ADB ثم حاول الاستعادة مجددًا."
                 }
             }
         }
@@ -647,7 +775,10 @@ class MainActivity : ComponentActivity() {
     fun requestStartAdvanced() {
         if (wirelessState != WirelessDebuggingManager.DebuggingState.READY) {
             AdvancedOperationLog.error(context, "رُفض بدء الوضع المتقدم: اتصال Wireless ADB غير جاهز.")
-            error = "أكمل اقتران التصحيح اللاسلكي أولاً."
+            error = ProxyFailureMessages.connection(
+                advanced = true,
+                details = "Wireless debugging is not paired or connected",
+            )
             return
         }
         launchAdvancedTunnel()
@@ -659,18 +790,23 @@ class MainActivity : ComponentActivity() {
         AdvancedOperationLog.info(context, "========== طلب إيقاف البروكسي المتقدم ==========")
         val expectedProxy = "127.0.0.1:${ProxyLocalService.localPort(context)}"
         coroutineScope.launch(Dispatchers.IO) {
-            val restoreResult = AdvancedSystemProxy.restore(context, expectedProxy)
+            val timezoneRestore = AdvancedProxyTimezoneController.restore(context)
+            val restoreResult = if (timezoneRestore.isSuccess) {
+                AdvancedSystemProxy.restore(context, expectedProxy)
+            } else {
+                timezoneRestore
+            }
             withContext(Dispatchers.Main) {
                 stopping = false
                 if (restoreResult.isSuccess) {
-                    AdvancedOperationLog.output(context, "أُعيد Android إلى الاتصال المباشر ثم أُوقفت خدمة البروكسي المحلي.")
+                    AdvancedOperationLog.output(context, "استُعيدت المنطقة الزمنية والبروكسي؛ جارٍ إيقاف خدمة البروكسي المحلي.")
                     locationController.stop()
+                    if (mockLocation) mockLocationStatus = "تم إيقاف الموقع الوهمي."
                     ProxyLocalService.stop(context)
                     running = false
                 } else {
-                    AdvancedOperationLog.error(context, "تعذر إيقاف آمن: فشلت استعادة إعدادات النظام.")
-                    error = "تعذر استعادة إعدادات البروكسي السابقة؛ أبقينا الخدمة نشطة لحماية الاتصال. " +
-                        (restoreResult.exceptionOrNull()?.message ?: "أعد المحاولة بعد التحقق من ADB.")
+                    AdvancedOperationLog.error(context, "تعذر إيقاف آمن: فشلت استعادة إعدادات البروكسي أو المنطقة الزمنية.")
+                    error = ProxyFailureMessages.advancedRestore(restoreResult.exceptionOrNull()?.message)
                 }
             }
         }
@@ -683,16 +819,29 @@ class MainActivity : ComponentActivity() {
         ProxyVpnService.clearLastError(context)
         ensureNotificationPermission()
         runCatching {
-            ProxyVpnService.start(context, protocol, host, port, username, password)
-            startLocation()
-        }.onFailure { starting = false; error = it.message ?: "تعذر تشغيل خدمة VPN." }
+            ProxyVpnService.start(
+                context,
+                protocol,
+                host,
+                port,
+                username,
+                password,
+                includeMockLocationInbound = mockLocation && locationMode == "auto",
+            )
+        }.onFailure {
+            starting = false
+            error = ProxyFailureMessages.fromThrowable(advanced = false, failure = it)
+        }
     }
 
     val vpnPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) launchVpnTunnel()
-        else { starting = false; error = "لم يتم منح إذن VPN." }
+        else {
+            starting = false
+            error = ProxyFailureMessages.connection(false, "VPN permission was denied")
+        }
     }
 
     fun requestStartVpn() {
@@ -705,6 +854,7 @@ class MainActivity : ComponentActivity() {
 
     fun stopVpn() {
         locationController.stop()
+        if (mockLocation) mockLocationStatus = "تم إيقاف الموقع الوهمي."
         ProxyVpnService.stop(context)
         running = false
     }
@@ -723,10 +873,61 @@ class MainActivity : ComponentActivity() {
             error = "أدخل كلمة مرور البروكسي أو أوقف خيار المصادقة."
             return
         }
+        if (mockLocation && locationMode == "manual") {
+            val parsedLatitude = latitude.toDoubleOrNull()
+            val parsedLongitude = longitude.toDoubleOrNull()
+            if (parsedLatitude == null || !parsedLatitude.isFinite() || parsedLatitude !in -90.0..90.0) {
+                error = "أدخل خط عرض صحيحًا بين -90 و90."
+                return
+            }
+            if (parsedLongitude == null || !parsedLongitude.isFinite() || parsedLongitude !in -180.0..180.0) {
+                error = "أدخل خط طول صحيحًا بين -180 و180."
+                return
+            }
+        }
+        if (mockLocation && ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            mockLocationStatus = "إذن الموقع التقريبي مطلوب فقط لتسليم الإحداثيات الوهمية إلى Google Maps."
+            error = "سيطلب Android إذن الموقع التقريبي؛ التطبيق لا يقرأ موقعك الحقيقي. لن يبدأ الاتصال قبل موافقتك."
+            coarseLocationPermissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+            return
+        }
         error = null
         checkingEndpoint = true
-        AdvancedOperationLog.info(context, "التحقق من إمكانية الوصول إلى خادم البروكسي قبل توجيه اتصال الجهاز (مهلة 5 ثوانٍ).")
+        AdvancedOperationLog.info(
+            context,
+            "فحص البروكسي قبل بدء الوضع=${mode.uppercase()}، endpoint=$host:$parsedPort، protocol=${protocol.uppercase()}، auth=$auth، target=1.1.1.1:443، TCP/read timeout=${ProxyEndpointProbe.DEFAULT_TIMEOUT_MS}ms؛ لا تُسجّل كلمات المرور."
+        )
         coroutineScope.launch {
+            if (mockLocation) {
+                mockLocationStatus = "جارٍ التحقق من اختيار التطبيق للموقع الوهمي…"
+                val mockAccess = withContext(Dispatchers.IO) {
+                    locationController.checkMockLocationAccess()
+                }
+                mockLocationAuthorized = mockAccess.isSuccess
+                if (mockAccess.isFailure) {
+                    checkingEndpoint = false
+                    val cause = mockAccess.exceptionOrNull()
+                    val permissionDenied = cause is SecurityException
+                    mockLocationStatus = if (permissionDenied) {
+                        "اختر Proxy Platform من إعداد اختيار تطبيق الموقع الوهمي."
+                    } else {
+                        "تعذر التحقق من إعداد الموقع الوهمي؛ راجع سبب المشكلة وخطوة الإصلاح أدناه."
+                    }
+                    if (cause != null) {
+                        AdvancedOperationLog.exception(context, "لم يُسمح للتطبيق بإنشاء test location provider", cause)
+                    }
+                    error = ProxyFailureMessages.mockLocation(
+                        if (permissionDenied) "mock location app not selected: ${cause?.message.orEmpty()}"
+                        else cause?.message
+                    )
+                    return@launch
+                }
+                mockLocationStatus = "تم التحقق من صلاحية الموقع الوهمي."
+            }
             val probe = withContext(Dispatchers.IO) {
                 ProxyEndpointProbe.check(
                     host,
@@ -734,17 +935,49 @@ class MainActivity : ComponentActivity() {
                     protocol,
                     if (auth) username else "",
                     if (auth) password else "",
+                    trace = { stage -> AdvancedOperationLog.info(context, "فحص البروكسي: $stage") },
                 )
             }
             if (probe.isFailure) {
                 checkingEndpoint = false
-                val reason = probe.exceptionOrNull()?.message
-                AdvancedOperationLog.error(context, "فشل فحص اتصال البروكسي قبل إنشاء النفق؛ لم نغيّر إعدادات شبكة Android.")
-                error = reason ?: "تعذر اختبار البروكسي. تحقق من الخادم والمنفذ والبروتوكول وبيانات المصادقة."
+                val failure = probe.exceptionOrNull()
+                AdvancedOperationLog.exception(context, "فشل فحص البروكسي قبل إنشاء النفق؛ لم تتغير إعدادات Android", failure ?: IllegalStateException("سبب غير معروف"))
+                error = ProxyFailureMessages.connection(mode == "advanced", failure?.message)
                 return@launch
             }
+
+            if (mode == "vpn" && protocol == "socks5") {
+                AdvancedOperationLog.info(
+                    context,
+                    "فحص UDP relay في SOCKS5 قبل طلب إذن VPN؛ WebRTC يعتمد على مرور UDP، ولن يبدأ النفق إذا لم يمنح الخادم UDP ASSOCIATE."
+                )
+                val udpProbe = withContext(Dispatchers.IO) {
+                    ProxyEndpointProbe.checkSocks5UdpAssociation(
+                        host,
+                        parsedPort!!,
+                        if (auth) username else "",
+                        if (auth) password else "",
+                        trace = { stage -> AdvancedOperationLog.info(context, "فحص SOCKS5 UDP: $stage") },
+                    )
+                }
+                if (udpProbe.isFailure) {
+                    checkingEndpoint = false
+                    val failure = udpProbe.exceptionOrNull()
+                    if (failure != null) AdvancedOperationLog.exception(context, "فشل اختبار SOCKS5 UDP relay", failure)
+                    error = ProxyFailureMessages.connection(false, failure?.message ?: "SOCKS5 UDP ASSOCIATE was rejected")
+                    return@launch
+                }
+            }
+
             checkingEndpoint = false
             if (mode == "vpn") requestStartVpn() else requestStartAdvanced()
+        }
+    }
+
+    LaunchedEffect(resumeStartAfterCoarsePermission) {
+        if (resumeStartAfterCoarsePermission) {
+            resumeStartAfterCoarsePermission = false
+            requestStart()
         }
     }
 
@@ -757,8 +990,12 @@ class MainActivity : ComponentActivity() {
             delay(1500)
             running = ProxyVpnService.isRunning(context)
             if (!running) {
-                error = ProxyVpnService.lastError(context)
-                    ?: "لم يبدأ الاتصال. تحقق من بيانات البروكسي وحاول مرة أخرى."
+                error = ProxyFailureMessages.connection(
+                    advanced = false,
+                    details = ProxyVpnService.lastError(context) ?: "VPN service failed to start",
+                )
+            } else {
+                startLocation()
             }
             starting = false
         }
@@ -770,50 +1007,6 @@ class MainActivity : ComponentActivity() {
         contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 142.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // ── Status hero ────────────────────────────────────────────────────────
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(27.dp),
-                colors = CardDefaults.cardColors(containerColor = KunPalette.PrimaryDeep),
-                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
-            ) {
-                Column(
-                    Modifier.fillMaxWidth()
-                        .background(Brush.linearGradient(listOf(KunPalette.PrimaryDeep, KunPalette.Primary, KunPalette.Cyan)))
-                        .padding(21.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text("حالة الاتصال", style = MaterialTheme.typography.labelLarge, color = Color.White.copy(alpha = 0.82f))
-                            Text(
-                                when { running -> "البروكسي نشط"; starting || checkingEndpoint -> "جارٍ الاتصال…"; else -> "جاهز للاتصال" },
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = Color.White,
-                            )
-                        }
-                        FeaturePill(
-                            if (running) "متصل" else if (starting || checkingEndpoint) "قيد الاتصال" else "غير متصل",
-                            color = Color.White,
-                            container = Color.White.copy(alpha = 0.16f),
-                        )
-                    }
-                    Text(
-                        when {
-                            mode == "vpn" && running -> "يتم توجيه حركة مرور الجهاز عبر نفق VPN."
-                            mode == "vpn" -> "اتصال مباشر بنقرة واحدة مع نافذة إذن Android القياسية."
-                            running -> "إعداد بروكسي النظام نشط للتطبيقات المتوافقة؛ قد تتجاوزه بعض التطبيقات."
-                            else -> "الوضع المتقدم يستخدم ADB المضمّن ولا يعرض أيقونة VPN."
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.88f),
-                    )
-                }
-            }
-        }
-
         // ── Connection mode ────────────────────────────────────────────────────
         item {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -844,6 +1037,16 @@ class MainActivity : ComponentActivity() {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (mode == "vpn") {
+                    Text(
+                        if (protocol == "socks5")
+                            "WebRTC / UDP: يمر عبر SOCKS5 داخل نفق VPN. نتحقق أولًا من UDP ASSOCIATE، ولا نسمح بمسار مباشر بديل."
+                        else
+                            "بروكسي HTTP لا ينقل UDP الخاص بـ WebRTC؛ اختر SOCKS5 يدعم UDP إذا أردت مكالمات WebRTC عبر البروكسي.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (protocol == "socks5") MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         }
 
@@ -893,8 +1096,8 @@ class MainActivity : ComponentActivity() {
                             Button(onClick = { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }, Modifier.fillMaxWidth()) { Text("فتح الإعدادات") }
                         }
                         WirelessDebuggingManager.DebuggingState.WIRELESS_DISABLED -> {
-                            Text("الخطوة 2: فعّل التصحيح اللاسلكي من خيارات المطور.", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                            Button(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }, Modifier.fillMaxWidth()) { Text("فتح إعدادات المطور") }
+                            Text("الخطوة 2: افتح خيارات المطوّر وفعّل Wireless debugging.", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                            Button(onClick = ::openDeveloperOptions, Modifier.fillMaxWidth()) { Text("فتح إعدادات التصحيح اللاسلكي") }
                         }
                         WirelessDebuggingManager.DebuggingState.NOT_PAIRED,
                         WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED -> {
@@ -902,9 +1105,19 @@ class MainActivity : ComponentActivity() {
                                 if (wirelessState == WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED)
                                     "الاقتران محفوظ لكن اتصال ADB انقطع. جرّب إعادة الاتصال، أو أعد الاقتران إذا ألغيت الجهاز من إعدادات Android."
                                 else
-                                    "الخطوة 3: افتح Wireless debugging ثم Pair device with pairing code. التطبيق يكتشف IP والمنفذ تلقائيًا عبر الشبكة.",
+                                    "افتح Wireless debugging ثم Pair device with pairing code. أدخل الرمز من إشعار التطبيق أو اكتبه هنا يدويًا.",
                                 style = MaterialTheme.typography.bodySmall
                             )
+                            OutlinedButton(
+                                onClick = ::openDeveloperOptions,
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !pairing,
+                            ) { Text("فتح خيارات المطوّر") }
+                            OutlinedButton(
+                                onClick = ::ensurePairingNotification,
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !pairing,
+                            ) { Text("إظهار إشعار إدخال رمز الاقتران") }
                             OutlinedTextField(
                                 value = pairingCode,
                                 onValueChange = { value -> pairingCode = PairingCodeInput.digitsOnly(value).take(6) },
@@ -927,7 +1140,7 @@ class MainActivity : ComponentActivity() {
                                             wirelessState = WirelessDebuggingManager.DebuggingState.READY
                                             error = null
                                         }.onFailure {
-                                            error = it.message ?: "فشل الاقتران. تأكد من بقاء شاشة الاقتران مفتوحة."
+                                            error = ProxyFailureMessages.pairing(it.message)
                                             wirelessState = withContext(Dispatchers.IO) {
                                                 WirelessDebuggingManager.checkState(context)
                                             }
@@ -940,11 +1153,6 @@ class MainActivity : ComponentActivity() {
                                 if (pairing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                                 else Text("اقتران واتصال تلقائي")
                             }
-                            OutlinedButton(
-                                onClick = ::ensurePairingNotification,
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = !pairing,
-                            ) { Text("إدخال الرمز من الإشعار") }
                             if (wirelessState == WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED) {
                                 OutlinedButton(
                                     onClick = {
@@ -958,7 +1166,7 @@ class MainActivity : ComponentActivity() {
                                             if (connected) {
                                                 wirelessState = WirelessDebuggingManager.DebuggingState.READY
                                             } else {
-                                                error = "تعذرت إعادة اتصال ADB. تأكد من تفعيل التصحيح اللاسلكي واتصال الهاتف بالشبكة نفسها."
+                                                error = ProxyFailureMessages.pairing("Wireless debugging reconnect failed")
                                                 wirelessState = withContext(Dispatchers.IO) {
                                                     WirelessDebuggingManager.checkState(context)
                                                 }
@@ -969,11 +1177,6 @@ class MainActivity : ComponentActivity() {
                                     enabled = !pairing
                                 ) { Text(if (pairing) "جارٍ إعادة الاتصال…" else "إعادة الاتصال عبر ADB") }
                             }
-                            OutlinedButton(
-                                onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) },
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = !pairing
-                            ) { Text("فتح إعدادات المطور") }
                             Text("لا تدخل IP أو أي منفذ؛ سيتم اكتشافهما تلقائيًا.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         WirelessDebuggingManager.DebuggingState.READY -> {
@@ -985,39 +1188,143 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-
+        if (mode == "advanced") item {
+            KUNCard {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(
+                            checked = matchProxyTimezone,
+                            onCheckedChange = { enabled ->
+                                matchProxyTimezone = enabled
+                                context.getSharedPreferences(
+                                    "advanced_proxy_timezone_options",
+                                    Context.MODE_PRIVATE,
+                                ).edit().putBoolean("enabled", enabled).apply()
+                                error = null
+                            },
+                            enabled = !running && !starting && !checkingEndpoint && !stopping,
+                        )
+                        Text(
+                            "تعديل المنطقة الزمنية بما يناسب البروكسي",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Text(
+                        "عند الاتصال، يحدد التطبيق المنطقة الزمنية لبلد خروج البروكسي عبر اتصال البروكسي ويطبقها على الهاتف. تُحفظ منطقتك الزمنية الحالية وإعداد الضبط التلقائي وتُستعاد عند إيقاف البروكسي.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "هذا الخيار يغير المنطقة الزمنية فقط ولا يغير لغة الهاتف. تُرسل خدمة تحديد الموقع طلب GeoIP إلى ipwho.is عبر البروكسي المختار.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
 
         // ── Mock location ────────────────────────────────────────────────────
         item {
             KUNCard {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Text("موقع وهمي اختياري", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("يتطلب Android اختيار هذا التطبيق من خيارات المطوّر.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(mockLocation, { mockLocation = it }, enabled = !running && !starting && !checkingEndpoint)
+                        androidx.compose.material3.Checkbox(
+                            checked = mockLocation,
+                            onCheckedChange = { enabled ->
+                                mockLocation = enabled
+                                mockLocationAuthorized = null
+                                mockLocationStatus = if (enabled) {
+                                    "افتح خطوة الإعداد أدناه واختر هذا التطبيق قبل الاتصال."
+                                } else {
+                                    "غير مفعّل"
+                                }
+                                context.getSharedPreferences("mock_location_options", Context.MODE_PRIVATE)
+                                    .edit().putBoolean("enabled", enabled).apply()
+                                if (!enabled) locationController.stop()
+                                error = null
+                            },
+                            enabled = !running && !starting && !checkingEndpoint && !stopping,
+                        )
                         Text("تفعيل الموقع الوهمي")
                     }
+                    if (mockLocation) {
+                        Text(
+                            "خطوة الإعداد: افتح خيارات المطوّر ← اختيار تطبيق الموقع الوهمي ← Proxy Platform. Android يطلب اختيار التطبيق يدويًا ولا يسمح للتطبيق بتجاوز شاشة الاختيار.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            mockLocationStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = when (mockLocationAuthorized) {
+                                true -> SuccessGreen
+                                false -> MaterialTheme.colorScheme.error
+                                null -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        OutlinedButton(
+                            onClick = ::openMockLocationSettings,
+                            modifier = Modifier.fillMaxWidth(),
+                            enabled = !running && !starting && !checkingEndpoint && !stopping,
+                        ) {
+                            Text(if (mockLocationAuthorized == true) "إعادة التحقق من اختيار التطبيق" else "اختيار تطبيق الموقع الوهمي")
+                        }
+                        Text(
+                            "عند الاتصال سيطلب Android إذن الموقع التقريبي فقط لإرسال الموقع الوهمي إلى Google Maps؛ التطبيق لا يقرأ موقعك الحقيقي ولا يطلب موقعًا دقيقًا.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(locationMode == "auto", { locationMode = "auto" }, label = { Text("تلقائي") })
-                        FilterChip(locationMode == "manual", { locationMode = "manual" }, label = { Text("يدوي") })
+                        FilterChip(
+                            selected = locationMode == "auto",
+                            onClick = { locationMode = "auto" },
+                            label = { Text("تلقائي") },
+                            enabled = !running && !starting && !checkingEndpoint && !stopping,
+                        )
+                        FilterChip(
+                            selected = locationMode == "manual",
+                            onClick = { locationMode = "manual" },
+                            label = { Text("يدوي") },
+                            enabled = !running && !starting && !checkingEndpoint && !stopping,
+                        )
                     }
                     if (locationMode == "manual") {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(latitude, { latitude = it }, Modifier.weight(1f), label = { Text("خط العرض") }, singleLine = true)
-                            OutlinedTextField(longitude, { longitude = it }, Modifier.weight(1f), label = { Text("خط الطول") }, singleLine = true)
+                            OutlinedTextField(
+                                value = latitude,
+                                onValueChange = { latitude = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("خط العرض") },
+                                singleLine = true,
+                                enabled = !running && !starting && !checkingEndpoint && !stopping,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            )
+                            OutlinedTextField(
+                                value = longitude,
+                                onValueChange = { longitude = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("خط الطول") },
+                                singleLine = true,
+                                enabled = !running && !starting && !checkingEndpoint && !stopping,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            )
                         }
                     }
-                    OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS)) }, Modifier.fillMaxWidth()) { Text("فتح خيارات المطوّر") }
                 }
             }
         }
 
         if (mode == "advanced" && !running && !starting &&
-            AdvancedSystemProxy.hasPendingRestore(context)
+            (AdvancedSystemProxy.hasPendingRestore(context) ||
+                AdvancedProxyTimezoneController.hasPendingRestore(context))
         ) item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "توجد جلسة متقدمة سابقة لم تكتمل استعادتها. أعد اتصال ADB ثم استعد الإعداد السابق قبل بدء جلسة جديدة.",
+                    "توجد جلسة متقدمة سابقة لم تكتمل استعادة إعداداتها. أعد اتصال ADB ثم استعد المنطقة الزمنية والبروكسي قبل بدء جلسة جديدة.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1025,7 +1332,7 @@ class MainActivity : ComponentActivity() {
                     onClick = ::stopAdvanced,
                     enabled = !stopping,
                     modifier = Modifier.fillMaxWidth()
-                ) { Text(if (stopping) "جارٍ الاستعادة…" else "استعادة بروكسي النظام السابق") }
+                ) { Text(if (stopping) "جارٍ الاستعادة…" else "استعادة إعدادات الجلسة السابقة") }
             }
         }
 
@@ -1045,7 +1352,7 @@ class MainActivity : ComponentActivity() {
         ) {
             AnimatedVisibility(visible = error != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(13.dp)) {
-                    Text(error.orEmpty(), Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall, maxLines = 3)
+                    Text(error.orEmpty(), Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall, maxLines = 8)
                 }
             }
             Button(

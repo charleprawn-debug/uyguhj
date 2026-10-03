@@ -1,7 +1,7 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android"); id("org.jetbrains.kotlin.plugin.compose") }
 
 android { namespace = "com.proxyplatform.app"; compileSdk = 35
-    defaultConfig { applicationId = "com.proxyplatform.app"; minSdk = 26; targetSdk = 35; versionCode = 9; versionName = "2.2.2"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"; vectorDrawables { useSupportLibrary = true }; buildConfigField("String", "API_BASE_URL", "\"${providers.gradleProperty("API_BASE_URL").orElse("https://uyguhj-production.up.railway.app/api/v1").get()}\"") }
+    defaultConfig { applicationId = "com.proxyplatform.app"; minSdk = 26; targetSdk = 35; versionCode = 16; versionName = "2.2.9"; testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"; vectorDrawables { useSupportLibrary = true }; buildConfigField("String", "API_BASE_URL", "\"${providers.gradleProperty("API_BASE_URL").orElse("https://uyguhj-production.up.railway.app/api/v1").get()}\"") }
     buildTypes { release { isMinifyEnabled = false; proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro") }; debug { applicationIdSuffix = ".debug" } }
     buildFeatures { compose = true; buildConfig = true }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
@@ -20,6 +20,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.5")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation(files("libs/libbox.aar"))
 
     // Embedded Wireless ADB client: pairing, mDNS discovery, connect, and shell.

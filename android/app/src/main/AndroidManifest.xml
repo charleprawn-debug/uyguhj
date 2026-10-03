@@ -1,18 +1,24 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!--
-        Fine/coarse location are intentionally NOT declared. Android's mock
-        location APIs (LocationManager.addTestProvider / setTestProviderLocation)
-        are gated purely by the user selecting this app under Developer options
-        -> Select mock location app; they do not require a runtime location
-        permission grant. Declaring the permission here would only add an
-        extra consent dialog with no functional benefit, so it is left out to
-        keep the permission ask as small as possible.
+        Android Settings filters this picker by requested permissions. This
+        signature-only permission is intentionally requested so this app is
+        listed; it is not granted to third-party apps. The user-selected
+        OP_MOCK_LOCATION AppOp remains the actual authorization gate.
+    -->
+    <uses-permission
+        android:name="android.permission.ACCESS_MOCK_LOCATION"
+        tools:ignore="ProtectedPermissions,MockLocation" />
+    <!--
+        Only approximate-location permission is declared because Google Play
+        Services requires it for Fused mock APIs. The app never requests real
+        location data; the user must still select this package in Developer options.
     -->
     <application
         android:name=".ProxyPlatformApplication"

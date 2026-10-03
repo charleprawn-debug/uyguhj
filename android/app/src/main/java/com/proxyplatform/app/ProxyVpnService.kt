@@ -53,6 +53,7 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
         val protocol = intent?.getStringExtra(EXTRA_PROTOCOL).orEmpty().lowercase()
         val username = intent?.getStringExtra(EXTRA_USERNAME)?.trim().orEmpty()
         val password = intent?.getStringExtra(EXTRA_PASSWORD).orEmpty()
+        val includeMockLocationInbound = intent?.getBooleanExtra(EXTRA_MOCK_LOCATION_INBOUND, false) ?: false
 
         if (host.isBlank() || port !in 1..65535 || protocol !in setOf("http", "socks", "socks5")) {
             AdvancedOperationLog.error(this, "بيانات upstream لنفق VPN غير صالحة؛ لا تُسجّل بيانات الاعتماد.")
@@ -69,7 +70,15 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
                 setupLibbox()
                 setupReady = true
             }
-            val config = SingBoxConfig.writeTun(this, protocol, host, port, username, password)
+            val config = SingBoxConfig.writeTun(
+                this,
+                protocol,
+                host,
+                port,
+                username,
+                password,
+                includeMockLocationInbound,
+            )
             val server = CommandServer(this, TunPlatformInterface(this))
             server.start()
             server.startOrReloadService(config.readText(), OverrideOptions().apply { autoRedirect = false })
@@ -201,13 +210,14 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
 
     private fun recordError(message: String) {
         AdvancedOperationLog.error(this, message)
+        val userMessage = ProxyFailureMessages.connection(advanced = false, details = message)
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putBoolean(KEY_RUNNING, false)
-            .putString(KEY_ERROR, message)
+            .putString(KEY_ERROR, userMessage)
             .apply()
         runCatching {
             getSystemService(NotificationManager::class.java)
-                .notify(NOTIFICATION_ID, notification(message))
+                .notify(NOTIFICATION_ID, notification(userMessage.replace('\n', ' ')))
         }
     }
 
@@ -257,6 +267,8 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
         const val EXTRA_PROTOCOL = "protocol"
         const val EXTRA_USERNAME = "username"
         const val EXTRA_PASSWORD = "password"
+        const val EXTRA_MOCK_LOCATION_INBOUND = "include_mock_location_inbound"
+        const val MOCK_LOCATION_PROXY_PORT = 10809
         const val PREFS = "proxy_vpn_tun"
         const val KEY_RUNNING = "running"
         private const val KEY_ERROR = "last_error"
@@ -273,7 +285,15 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_ERROR).apply()
         }
 
-        fun start(context: Context, protocol: String, host: String, port: String, username: String, password: String) {
+        fun start(
+            context: Context,
+            protocol: String,
+            host: String,
+            port: String,
+            username: String,
+            password: String,
+            includeMockLocationInbound: Boolean = false,
+        ) {
             val intent = Intent(context, ProxyVpnService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_PROTOCOL, protocol)
@@ -281,6 +301,7 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
                 putExtra(EXTRA_PORT, port.toInt())
                 putExtra(EXTRA_USERNAME, username)
                 putExtra(EXTRA_PASSWORD, password)
+                putExtra(EXTRA_MOCK_LOCATION_INBOUND, includeMockLocationInbound)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
         }

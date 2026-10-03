@@ -47,7 +47,7 @@ class ProxyLocalService : Service(), CommandServerHandler {
             AdvancedOperationLog.output(this, "اكتملت تهيئة محرك sing-box.")
         }.onFailure { error ->
             Log.e(tag, "Libbox setup failed", error)
-            AdvancedOperationLog.error(this, "فشلت تهيئة sing-box: ${error.rootCauseMessage()}")
+            AdvancedOperationLog.exception(this, "فشلت تهيئة sing-box", error)
             recordError("تعذر تشغيل محرك البروكسي الأصلي: ${error.rootCauseMessage()}")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -107,7 +107,7 @@ class ProxyLocalService : Service(), CommandServerHandler {
             START_STICKY
         } catch (error: Exception) {
             Log.e(tag, "Local proxy startup failed", error)
-            AdvancedOperationLog.error(this, "فشل تشغيل البروكسي المحلي: ${error.rootCauseMessage()}")
+            AdvancedOperationLog.exception(this, "فشل تشغيل البروكسي المحلي", error)
             recordError("تعذر تشغيل البروكسي المحلي: ${error.rootCauseMessage()}")
             stopTunnel()
             START_NOT_STICKY
@@ -159,13 +159,14 @@ class ProxyLocalService : Service(), CommandServerHandler {
 
     private fun recordError(message: String) {
         AdvancedOperationLog.error(this, message)
+        val userMessage = ProxyFailureMessages.connection(advanced = true, details = message)
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putBoolean(KEY_RUNNING, false)
-            .putString(KEY_ERROR, message)
+            .putString(KEY_ERROR, userMessage)
             .apply()
         runCatching {
             getSystemService(NotificationManager::class.java)
-                .notify(NOTIFICATION_ID, notification(message))
+                .notify(NOTIFICATION_ID, notification(userMessage.replace('\n', ' ')))
         }
     }
 

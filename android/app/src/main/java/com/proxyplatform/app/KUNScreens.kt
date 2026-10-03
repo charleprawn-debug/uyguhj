@@ -333,32 +333,6 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues, onProductClic
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(28.dp),
-                colors = CardDefaults.cardColors(containerColor = KunPalette.PrimaryDeep),
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().background(
-                        Brush.linearGradient(listOf(KunPalette.PrimaryDeep, KunPalette.Primary, Color(0xFF44B8CB)))
-                    ).padding(22.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    FeaturePill("منتجات فعلية من الخدمة", color = Color.White, container = Color.White.copy(alpha = 0.15f))
-                    Text("اكتشف السوق", style = MaterialTheme.typography.headlineMedium, color = Color.White, fontWeight = FontWeight.ExtraBold)
-                    Text(
-                        "تصفّح المنتجات المتاحة وتعرّف على البروتوكول والموقع والسعر قبل فتح التفاصيل.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.88f),
-                    )
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FeaturePill("${vm.products.size} منتجات", color = KunPalette.PrimaryDeep, container = Color.White)
-                        if (vm.productsLoading) androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
-                    }
-                }
-            }
-        }
-        item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,

@@ -41,7 +41,7 @@ internal object AdvancedSystemProxy {
         check(actual == proxy) { "إعداد النظام '$actual' لا يطابق '$proxy'." }
         AdvancedOperationLog.output(context, "تأكد ضبط بروكسي النظام والتحقق منه: $actual.")
     }.onFailure {
-        AdvancedOperationLog.error(context, "فشل ضبط بروكسي النظام: ${it.message ?: it.javaClass.simpleName}")
+        AdvancedOperationLog.exception(context, "فشل ضبط بروكسي النظام", it)
         // If setting the new proxy partially succeeded, do not leave it behind.
         restore(context, proxy)
     }
@@ -104,7 +104,7 @@ internal object AdvancedSystemProxy {
         }
         AdvancedOperationLog.output(context, "تمت استعادة إعدادات بروكسي Android والتحقق من وضع الاتصال المباشر.")
     }.onFailure {
-        AdvancedOperationLog.error(context, "فشلت استعادة بروكسي Android: ${it.message ?: it.javaClass.simpleName}")
+        AdvancedOperationLog.exception(context, "فشلت استعادة بروكسي Android", it)
     }
 
     private fun read(context: Context, key: String): Result<String> =

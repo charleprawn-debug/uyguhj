@@ -26,6 +26,7 @@ class ProxyEndpointProbeTest {
 
     @Test
     fun acceptsASuccessfulSocks5InternetTunnel() {
+        val trace = mutableListOf<String>()
         withMockProxy({ client ->
             val input = DataInputStream(client.getInputStream())
             val output = DataOutputStream(client.getOutputStream())
@@ -40,7 +41,77 @@ class ProxyEndpointProbeTest {
             output.write(byteArrayOf(5, 0, 0, 1, 1, 1, 1, 1, 1, 0xBB.toByte()))
             output.flush()
         }) { port ->
-            assertTrue(ProxyEndpointProbe.check("127.0.0.1", port, "socks5", "", "", 1_000).isSuccess)
+            assertTrue(
+                ProxyEndpointProbe.check(
+                    "127.0.0.1", port, "socks5", "", "", 1_000, { line -> trace.add(line); Unit }
+                ).isSuccess
+            )
+        }
+        assertTrue(trace.any { "طريقة المصادقة المختارة=0" in it })
+        assertTrue(trace.any { "SOCKS5 CONNECT" in it })
+        assertTrue(trace.any { "نجح handshake" in it })
+    }
+
+    @Test
+    fun acceptsAuthenticatedSocks5UdpRelay() {
+        val trace = mutableListOf<String>()
+        withMockProxy({ client ->
+            val input = DataInputStream(client.getInputStream())
+            val output = DataOutputStream(client.getOutputStream())
+            assertEquals(5, input.readUnsignedByte())
+            assertEquals(1, input.readUnsignedByte())
+            assertEquals(2, input.readUnsignedByte())
+            output.write(byteArrayOf(5, 2))
+            output.flush()
+
+            assertEquals(1, input.readUnsignedByte())
+            val username = ByteArray(input.readUnsignedByte())
+            input.readFully(username)
+            val password = ByteArray(input.readUnsignedByte())
+            input.readFully(password)
+            assertEquals("test-user", String(username, StandardCharsets.UTF_8))
+            assertEquals("test-password", String(password, StandardCharsets.UTF_8))
+            output.write(byteArrayOf(1, 0))
+            output.flush()
+
+            val request = ByteArray(10)
+            input.readFully(request)
+            assertEquals(5, request[0].toInt())
+            assertEquals(3, request[1].toInt()) // UDP ASSOCIATE
+            output.write(byteArrayOf(5, 0, 0, 1, 127, 0, 0, 1, 0x13, 0x88.toByte()))
+            output.flush()
+        }) { port ->
+            val result = ProxyEndpointProbe.checkSocks5UdpAssociation(
+                "127.0.0.1", port, "test-user", "test-password", 1_000,
+                { line -> trace.add(line); Unit },
+            )
+            assertTrue(result.exceptionOrNull()?.message.orEmpty(), result.isSuccess)
+        }
+        assertTrue(trace.any { "اختار الخادم طريقة المصادقة 2" in it })
+        assertTrue(trace.any { "relay=127.0.0.1:5000" in it })
+    }
+
+    @Test
+    fun rejectsSocks5ServerThatDoesNotSupportUdpAssociate() {
+        withMockProxy({ client ->
+            val input = DataInputStream(client.getInputStream())
+            val output = DataOutputStream(client.getOutputStream())
+            assertEquals(5, input.readUnsignedByte())
+            assertEquals(1, input.readUnsignedByte())
+            assertEquals(0, input.readUnsignedByte())
+            output.write(byteArrayOf(5, 0))
+            output.flush()
+            val request = ByteArray(10)
+            input.readFully(request)
+            assertEquals(3, request[1].toInt())
+            output.write(byteArrayOf(5, 7, 0, 1, 127, 0, 0, 1, 0x13, 0x88.toByte()))
+            output.flush()
+        }) { port ->
+            val result = ProxyEndpointProbe.checkSocks5UdpAssociation(
+                "127.0.0.1", port, "", "", 1_000
+            )
+            assertTrue(result.isFailure)
+            assertTrue(result.exceptionOrNull()?.message?.contains("لا يمنح UDP relay") == true)
         }
     }
 

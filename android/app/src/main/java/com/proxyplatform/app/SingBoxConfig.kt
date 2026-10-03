@@ -76,6 +76,7 @@ object SingBoxConfig {
         port: Int,
         username: String,
         password: String,
+        includeMockLocationInbound: Boolean = false,
     ): File {
         val outbound = JSONObject()
             .put("type", if (protocol == "socks5") "socks" else protocol)
@@ -98,22 +99,34 @@ object SingBoxConfig {
             .put("path", "/dns-query")
             .put("detour", "proxy")
 
+        val tunInbounds = JSONArray()
+        if (includeMockLocationInbound) {
+            tunInbounds.put(JSONObject()
+                .put("type", "mixed")
+                .put("tag", "mock-location-in")
+                .put("listen", "127.0.0.1")
+                .put("listen_port", ProxyVpnService.MOCK_LOCATION_PROXY_PORT))
+        }
+        tunInbounds.put(JSONObject()
+            .put("type", "tun")
+            .put("tag", "tun-in")
+            .put("interface_name", "proxyplatform")
+            // Route both address families into Android's VPN. WebRTC can
+            // choose IPv6, so omitting this address could leave IPv6 outside the TUN.
+            .put("address", JSONArray().put(TUN_ADDRESS).put(TUN_IPV6_ADDRESS))
+            .put("mtu", TUN_MTU)
+            .put("auto_route", true)
+            .put("strict_route", false)
+            .put("stack", "gvisor")
+            .put("sniff", false))
+
         val config = JSONObject()
             .put("log", JSONObject().put("level", "error"))
             .put("dns", JSONObject()
                 .put("servers", JSONArray().put(dns))
                 .put("final", "cloudflare-doh")
                 .put("strategy", "prefer_ipv4"))
-            .put("inbounds", JSONArray().put(JSONObject()
-                .put("type", "tun")
-                .put("tag", "tun-in")
-                .put("interface_name", "proxyplatform")
-                .put("address", JSONArray().put(TUN_ADDRESS))
-                .put("mtu", TUN_MTU)
-                .put("auto_route", true)
-                .put("strict_route", false)
-                .put("stack", "gvisor")
-                .put("sniff", false)))
+            .put("inbounds", tunInbounds)
             .put("outbounds", JSONArray()
                 .put(outbound)
                 .put(JSONObject().put("type", "direct").put("tag", "direct")))
@@ -141,5 +154,6 @@ object SingBoxConfig {
     private const val CONFIG_FILE = "Config.json"
     private const val TUN_CONFIG_FILE = "ConfigTun.json"
     const val TUN_ADDRESS = "172.19.0.1/28"
+    private const val TUN_IPV6_ADDRESS = "fdfe:dcba:9876::1/126"
     const val TUN_MTU = 1400
 }

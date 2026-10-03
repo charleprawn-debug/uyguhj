@@ -29,7 +29,7 @@ class AdbPairingService : Service() {
         )
         startForegroundCompat(AdbPairingNotifier.progressNotification(this))
         if (pairingCode == null) {
-            AdbPairingNotifier.showResult(this, success = false)
+            AdbPairingNotifier.showResult(this, success = false, detail = "invalid pairing code")
             stopForeground(STOP_FOREGROUND_DETACH)
             stopSelfResult(startId)
             return START_NOT_STICKY

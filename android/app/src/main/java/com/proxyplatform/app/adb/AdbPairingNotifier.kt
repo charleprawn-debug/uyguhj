@@ -10,6 +10,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.RemoteInput
 import com.proxyplatform.app.MainActivity
+import com.proxyplatform.app.ProxyFailureMessages
 import com.proxyplatform.app.R
 
 /** Pair Wireless ADB from the notification shade without opening the application. */
@@ -23,10 +24,13 @@ object AdbPairingNotifier {
     private const val REQUEST_PAIR = 5701
     private const val REQUEST_OPEN_APP = 5702
 
-    fun showPairing(context: Context, statusText: String? = null) {
+    fun showPairing(context: Context, statusText: String? = null): Boolean {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notification = pairingNotification(context, statusText)
-        runCatching { manager.notify(NOTIFICATION_ID, notification) }
+        return runCatching {
+            manager.notify(NOTIFICATION_ID, notification)
+            true
+        }.getOrDefault(false)
     }
 
     fun progressNotification(context: Context, statusText: String = "جارٍ الاقتران والاتصال عبر Wireless ADB…"): Notification {
@@ -43,8 +47,8 @@ object AdbPairingNotifier {
 
     fun showResult(context: Context, success: Boolean, detail: String? = null) {
         if (!success) {
-            val message = detail?.take(140)?.takeIf { it.isNotBlank() }
-                ?: "تعذر الاقتران. تأكد من إبقاء شاشة رمز الاقتران مفتوحة ثم حاول مجددًا."
+            val message = ProxyFailureMessages.pairing(detail ?: "pairing failed")
+                .lineSequence().take(2).joinToString(" ")
             showPairing(context, message)
             return
         }

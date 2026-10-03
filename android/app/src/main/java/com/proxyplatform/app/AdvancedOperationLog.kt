@@ -61,6 +61,14 @@ internal object AdvancedOperationLog {
     fun error(context: Context, message: String) = append(context, "ERR", message)
     fun singBox(context: Context, message: String) = append(context, "SINGBOX", message)
 
+    fun exception(context: Context, stage: String, throwable: Throwable) {
+        error(context, "$stage: ${throwable.javaClass.name}: ${throwable.message ?: "بلا تفاصيل"}")
+        throwable.stackTraceToString()
+            .take(EXIT_TRACE_MAX_CHARS)
+            .lineSequence()
+            .forEach { append(context, "TRACE", it) }
+    }
+
     fun appStarted(context: Context) {
         info(
             context,
@@ -112,10 +120,17 @@ internal object AdvancedOperationLog {
             .onFailure { Log.e(TAG, "Unable to queue operation log sync", it) }
     }
 
-    fun readLines(context: Context): List<String> = runCatching {
+    fun readLines(context: Context, maxLines: Int = 800): List<String> = runCatching {
+        require(maxLines > 0) { "يجب أن يكون عدد أسطر السجل موجبًا." }
         writer.submit<List<String>> {
             synchronized(lock) {
-                logFile(context).takeIf(File::exists)?.readLines(Charsets.UTF_8).orEmpty()
+                val file = logFile(context).takeIf(File::exists) ?: return@synchronized emptyList()
+                val tail = ArrayDeque<String>(maxLines)
+                file.forEachLine(Charsets.UTF_8) { line ->
+                    if (tail.size == maxLines) tail.removeFirst()
+                    tail.addLast(line)
+                }
+                tail.toList()
             }
         }.get()
     }.onFailure { Log.e(TAG, "Unable to read operation log", it) }

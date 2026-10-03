@@ -74,7 +74,7 @@ object WirelessDebuggingManager {
         result.onSuccess {
             AdvancedOperationLog.output(context, "اتصال Wireless ADB جاهز.")
         }.onFailure {
-            AdvancedOperationLog.error(context, "فشل اقتران/اتصال Wireless ADB: ${it.message ?: it.javaClass.simpleName}")
+            AdvancedOperationLog.exception(context, "فشل اقتران/اتصال Wireless ADB", it)
         }
         return result
     }
@@ -89,7 +89,7 @@ object WirelessDebuggingManager {
             AdvancedOperationLog.output(context, "تمت إعادة اتصال Wireless ADB.")
         }.onFailure {
             Log.w(TAG, "ADB auto-connect failed", it)
-            AdvancedOperationLog.error(context, "فشلت إعادة اتصال Wireless ADB: ${it.message ?: it.javaClass.simpleName}")
+            AdvancedOperationLog.exception(context, "فشلت إعادة اتصال Wireless ADB", it)
         }
         return result.isSuccess
     }
@@ -107,13 +107,13 @@ object WirelessDebuggingManager {
             return first
         }
         if (first.exceptionOrNull() is RemoteShellCommandException) {
-            AdvancedOperationLog.error(context, "رفض shell الأمر برمز خروج غير صفري؛ لن تتم إعادة إرساله.")
+            first.exceptionOrNull()?.let { AdvancedOperationLog.exception(context, "رفض Android أمر shell برمز خروج غير صفري؛ لن تتم إعادة إرساله", it) }
             return first
         }
 
         // Wireless ADB can be dropped by Android after pairing or after the
         // app has been backgrounded. Reconnect once before reporting failure.
-        AdvancedOperationLog.error(context, "فشل تنفيذ أمر ADB: ${first.exceptionOrNull()?.message ?: "سبب غير معروف"}")
+        first.exceptionOrNull()?.let { AdvancedOperationLog.exception(context, "فشل تنفيذ أمر ADB قبل إعادة المحاولة", it) }
         val retry = runCatching {
             Log.w(TAG, "ADB command failed; reconnecting once", first.exceptionOrNull())
             AdvancedOperationLog.info(context, "إعادة المحاولة مرة واحدة بعد إعادة اتصال ADB.")
@@ -123,7 +123,7 @@ object WirelessDebuggingManager {
         }
         retry.onFailure {
             Log.e(TAG, "ADB shell command failed: $command", it)
-            AdvancedOperationLog.error(context, "فشل أمر ADB بعد إعادة المحاولة: ${it.message ?: it.javaClass.simpleName}")
+            AdvancedOperationLog.exception(context, "فشل أمر ADB بعد إعادة المحاولة", it)
         }
         return retry
     }
@@ -161,9 +161,7 @@ object WirelessDebuggingManager {
         EmbeddedAdbManager.get(context).close()
     }
 
-    fun showPairingNotification(context: Context) {
-        AdbPairingNotifier.showPairing(context)
-    }
+    fun showPairingNotification(context: Context): Boolean = AdbPairingNotifier.showPairing(context)
 
     fun getDebuggingSettingsIntent(context: Context): Intent =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
