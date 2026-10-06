@@ -2,9 +2,11 @@ package com.proxyplatform.app
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.annotation.TargetApi
 import android.app.Activity
 import android.app.Instrumentation
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.PersistableBundle
@@ -197,6 +199,7 @@ internal class SimOperatorController(context: Context) {
 
 /** The NRFR API calls run under shell identity, but their transport is the app's own Wireless ADB. */
 class SimCarrierConfigInstrumentation : Instrumentation() {
+    @TargetApi(Build.VERSION_CODES.R)
     override fun onCreate(arguments: Bundle) {
         super.onCreate(arguments)
         start()
@@ -204,6 +207,12 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
         var resultCode = Activity.RESULT_OK
         var adoptedShellIdentity = false
         val automation = uiAutomation
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            result.putString("success", "false")
+            result.putString("error", "ميزة SIM عبر Wireless ADB تتطلب Android 11 أو أحدث.")
+            finish(Activity.RESULT_CANCELED, result)
+            return
+        }
 
         try {
             checkNotNull(automation) { "UiAutomation غير متاح داخل Instrumentation." }
@@ -386,9 +395,8 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
         }
 
         companion object {
-            @SuppressLint("BlockedPrivateApi")
+            @SuppressLint("BlockedPrivateApi", "SoonBlockedPrivateApi", "PrivateApi")
             fun connect(): CarrierConfigService {
-                HiddenApiBypass.addHiddenApiExemptions("L")
                 val initializer = Class.forName("android.telephony.TelephonyFrameworkInitializer")
                 val serviceManager = initializer.getDeclaredMethod("getTelephonyServiceManager")
                     .apply { isAccessible = true }
