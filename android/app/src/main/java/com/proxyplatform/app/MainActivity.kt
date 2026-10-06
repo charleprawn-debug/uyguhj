@@ -110,7 +110,7 @@ internal data class Product(
 )
 internal data class Profile(val email: String, val name: String, val role: String, val verified: Boolean)
 internal data class Subscription(val status: String, val expires: String, val product: String, val protocol: String)
-internal enum class Screen { MARKET, SUBSCRIPTIONS, PROXY, PROFILE }
+internal enum class Screen { MARKET, SUBSCRIPTIONS, PROXY, SIM, PROFILE }
 
 private val SuccessGreen = KunPalette.Success
 private val SuccessGreenContainer = KunPalette.SuccessSoft

@@ -246,6 +246,7 @@ internal fun MainShell(vm: AppViewModel) {
             Screen.PROFILE -> vm.loadProfile()
             Screen.SUBSCRIPTIONS -> vm.loadSubscriptions()
             Screen.PROXY -> Unit
+            Screen.SIM -> Unit
         }
     }
 
@@ -253,12 +254,14 @@ internal fun MainShell(vm: AppViewModel) {
         Screen.MARKET -> "السوق"
         Screen.SUBSCRIPTIONS -> "اشتراكاتي"
         Screen.PROXY -> "اتصال البروكسي"
+        Screen.SIM -> "SIM"
         Screen.PROFILE -> "حسابي"
     }
     val sectionDescription = when (screen) {
         Screen.MARKET -> "تصفّح المنتجات المتاحة"
         Screen.SUBSCRIPTIONS -> "إدارة خططك الحالية"
         Screen.PROXY -> "إعداد اتصالك والتحكم فيه"
+        Screen.SIM -> "اختبار خصائص المشغّل عبر ADB"
         Screen.PROFILE -> "بيانات الحساب والتحقق"
     }
 
@@ -289,6 +292,7 @@ internal fun MainShell(vm: AppViewModel) {
                     Triple(Screen.MARKET, "السوق", R.drawable.ic_nav_market),
                     Triple(Screen.SUBSCRIPTIONS, "الخطط", R.drawable.ic_nav_subscriptions),
                     Triple(Screen.PROXY, "الاتصال", R.drawable.ic_nav_proxy),
+                    Triple(Screen.SIM, "SIM", R.drawable.ic_nav_sim),
                     Triple(Screen.PROFILE, "حسابي", R.drawable.ic_nav_profile),
                 )
                 entries.forEach { (destination, label, iconId) ->
@@ -314,6 +318,7 @@ internal fun MainShell(vm: AppViewModel) {
                 Screen.MARKET -> Marketplace(vm, padding) { selectedProduct = it }
                 Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding) { screen = Screen.MARKET }
                 Screen.PROXY -> ProxyScreen(padding)
+                Screen.SIM -> SimScreen(padding)
                 Screen.PROFILE -> ProfileScreen(vm, padding)
             }
         }
