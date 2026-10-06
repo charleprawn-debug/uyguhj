@@ -6,36 +6,41 @@ import org.junit.Test
 
 class SimOperatorProfilesTest {
     @Test
-    fun canadaProfileMapsToRogersMccMncAndCountry() {
-        val profile = SimOperatorProfiles.find("canada_rogers")!!
-
-        assertEquals("302720", profile.operatorNumeric)
-        assertEquals("Rogers", profile.operatorAlpha)
-        assertEquals("ca", profile.isoCountry)
-        assertEquals(6, SimOperatorProfiles.values(profile).size)
+    fun allNrfrCountryCodesArePresentOnce() {
+        val expected = setOf(
+            "CN", "HK", "MO", "TW", "JP", "KR", "US", "GB", "DE", "FR", "IT", "ES", "PT", "RU",
+            "IN", "AU", "NZ", "SG", "MY", "TH", "VN", "ID", "PH", "CA", "MX", "BR", "AR", "ZA",
+        )
+        assertEquals(28, SimNrfrPresets.countries.size)
+        assertEquals(expected, SimNrfrPresets.countries.map { it.code }.toSet())
     }
 
     @Test
-    fun unitedStatesProfileMapsToTMobileMccMncAndCountry() {
-        val profile = SimOperatorProfiles.find("usa_tmobile")!!
-
-        assertEquals("310260", profile.operatorNumeric)
-        assertEquals("T-Mobile", profile.operatorAlpha)
-        assertEquals("us", profile.isoCountry)
-        assertEquals(6, SimOperatorProfiles.values(profile).size)
+    fun allNrfrCarrierChoicesAndCustomEntryArePresent() {
+        assertEquals(75, SimNrfrPresets.carriers.size)
+        assertEquals(1, SimNrfrPresets.carriers.count { it.custom })
+        assertTrue(SimNrfrPresets.carriers.any { it.displayName == "T-Mobile USA" && it.region == "US" })
+        assertTrue(SimNrfrPresets.carriers.any { it.displayName == "Rogers Wireless" && it.region == "CA" })
     }
 
     @Test
     fun shellQuotingEscapesSingleQuotes() {
         assertEquals("'a'\\''b'", SimOperatorCommands.quote("a'b"))
-        assertTrue(SimOperatorCommands.setAndRead("gsm.operator.alpha", "T-Mobile").contains("setprop"))
     }
 
     @Test
-    fun parsesSetterStatusAndReadBackValue() {
-        val result = SimOperatorCommands.parseSetResult("permission warning\n${SimOperatorCommands.RESULT_MARKER}0|Rogers\n")
-
-        assertEquals(0, result.exitCode)
-        assertEquals("Rogers", result.value)
+    fun detachedCommandCallsTheSameApkInstrumentationAndRelaunchesApp() {
+        val command = SimOperatorCommands.buildDetachedInstrumentationCommand(
+            packageName = "com.proxyplatform.app.debug",
+            operation = "save",
+            arguments = mapOf("subId" to "42", "countryCode" to "US", "carrierName" to "T-Mobile USA"),
+        )
+        assertTrue(command.startsWith("nohup sh -c "))
+        assertTrue(command.contains("com.proxyplatform.app.debug/com.proxyplatform.app.SimCarrierConfigInstrumentation"))
+        assertTrue(command.contains("subId"))
+        assertTrue(command.contains("T-Mobile USA"))
+        assertTrue(command.contains("monkey -p "))
+        assertTrue(!command.contains("setprop"))
+        assertTrue(!command.contains("shizuku"))
     }
 }
