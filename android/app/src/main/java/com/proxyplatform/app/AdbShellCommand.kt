@@ -8,7 +8,7 @@ internal object AdbShellCommand {
     data class Response(val output: String, val exitCode: Int)
 
     fun wrap(command: String): String =
-        "$command; __proxy_platform_status=\$?; printf '\\n$EXIT_MARKER:%s\\n' \"\$__proxy_platform_status\""
+        "${command.trimEnd()}\n__proxy_platform_status=\$?; printf '\\n$EXIT_MARKER:%s\\n' \"\$__proxy_platform_status\""
 
     fun hasCompletionMarker(response: String): Boolean = statusPattern.containsMatchIn(response)
 
