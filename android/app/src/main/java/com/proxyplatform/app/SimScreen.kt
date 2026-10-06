@@ -375,7 +375,7 @@ internal fun SimScreen(padding: PaddingValues) {
                         DropdownMenu(
                             expanded = countryMenuExpanded,
                             onDismissRequest = { countryMenuExpanded = false },
-                            modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                            modifier = Modifier.heightIn(max = 460.dp),
                         ) {
                             SimNrfrPresets.countries.forEach { country ->
                                 DropdownMenuItem(
@@ -435,7 +435,7 @@ internal fun SimScreen(padding: PaddingValues) {
                         DropdownMenu(
                             expanded = carrierMenuExpanded,
                             onDismissRequest = { carrierMenuExpanded = false },
-                            modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                            modifier = Modifier.heightIn(max = 460.dp),
                         ) {
                             SimNrfrPresets.carriers.filterNot { it.custom }.groupBy { it.region }.forEach { (region, carriers) ->
                                 val regionLabel = SimNrfrPresets.countries.firstOrNull { it.code == region }?.label ?: region

@@ -8,9 +8,16 @@ class AdbShellCommandTest {
     @Test
     fun wrapsCommandsWithRemoteExitStatusMarker() {
         val command = AdbShellCommand.wrap("settings put global http_proxy '127.0.0.1:10808'")
-        assertTrue(command.startsWith("settings put global http_proxy '127.0.0.1:10808';"))
+        assertTrue(command.startsWith("settings put global http_proxy '127.0.0.1:10808'\n"))
         assertTrue(command.contains("__proxy_platform_status=\$?"))
         assertTrue(command.contains(AdbShellCommand.EXIT_MARKER))
+    }
+
+    @Test
+    fun separatesBackgroundCommandFromExitMarkerWithNewline() {
+        val command = AdbShellCommand.wrap("nohup sh -c 'sleep 1' </dev/null >/dev/null 2>&1 &")
+        assertTrue(command.contains("&\n__proxy_platform_status=\$?"))
+        assertTrue(!command.contains("&;"))
     }
 
     @Test
