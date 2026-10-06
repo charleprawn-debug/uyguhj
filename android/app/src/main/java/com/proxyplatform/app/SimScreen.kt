@@ -5,26 +5,31 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.provider.Settings
 import android.widget.Toast
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -35,6 +40,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -42,25 +48,47 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
 import com.proxyplatform.app.adb.PairingCodeInput
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private const val SIM_UI_PREFS = "sim_nrfr_ui"
+private const val PREF_SELECTED_SUB_ID = "selected_sub_id"
+private const val PREF_COUNTRY_CODE = "country_code"
+private const val PREF_CUSTOM_COUNTRY_CODE = "custom_country_code"
+private const val PREF_IS_CUSTOM_COUNTRY = "is_custom_country"
+private const val PREF_CARRIER_ID = "carrier_id"
+private const val PREF_CUSTOM_CARRIER = "custom_carrier"
 
 @Composable
 internal fun SimScreen(padding: PaddingValues) {
     val context = LocalContext.current
     val controller = remember(context) { SimOperatorController(context) }
+    val uiPrefs = remember(context) { context.getSharedPreferences(SIM_UI_PREFS, Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+
     var adbState by remember { mutableStateOf(WirelessDebuggingManager.DebuggingState.NOT_PAIRED) }
-    var selectedProfile by remember { mutableStateOf(SimOperatorProfiles.all.first()) }
+    var simCards by remember { mutableStateOf(controller.readSimCards()) }
+    var selectedSubId by remember { mutableIntStateOf(uiPrefs.getInt(PREF_SELECTED_SUB_ID, -1)) }
+    var selectedCountryCode by remember { mutableStateOf(uiPrefs.getString(PREF_COUNTRY_CODE, "").orEmpty()) }
+    var customCountryCode by remember { mutableStateOf(uiPrefs.getString(PREF_CUSTOM_COUNTRY_CODE, "").orEmpty()) }
+    var isCustomCountryCode by remember { mutableStateOf(uiPrefs.getBoolean(PREF_IS_CUSTOM_COUNTRY, false)) }
+    var selectedCarrierId by remember { mutableStateOf(uiPrefs.getString(PREF_CARRIER_ID, "").orEmpty()) }
+    var customCarrierName by remember { mutableStateOf(uiPrefs.getString(PREF_CUSTOM_CARRIER, "").orEmpty()) }
+    var countryMenuExpanded by remember { mutableStateOf(false) }
+    var carrierMenuExpanded by remember { mutableStateOf(false) }
     var pairingCode by remember { mutableStateOf("") }
     var airplaneMode by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
@@ -68,39 +96,88 @@ internal fun SimScreen(padding: PaddingValues) {
     var logs by remember { mutableStateOf(SimOperationLog.read(context)) }
     val logScrollState = rememberScrollState()
     val connected = adbState == WirelessDebuggingManager.DebuggingState.READY
-    val pendingRestore = controller.hasPendingRestore
+    val selectedSim = simCards.firstOrNull { it.subscriptionId == selectedSubId } ?: simCards.firstOrNull()
+    val selectedCarrier = SimNrfrPresets.carriers.firstOrNull { it.id == selectedCarrierId }
 
-    LaunchedEffect(logs) {
-        logScrollState.animateScrollTo(logScrollState.maxValue)
+    fun persistUiState() {
+        uiPrefs.edit()
+            .putInt(PREF_SELECTED_SUB_ID, selectedSubId)
+            .putString(PREF_COUNTRY_CODE, selectedCountryCode)
+            .putString(PREF_CUSTOM_COUNTRY_CODE, customCountryCode)
+            .putBoolean(PREF_IS_CUSTOM_COUNTRY, isCustomCountryCode)
+            .putString(PREF_CARRIER_ID, selectedCarrierId)
+            .putString(PREF_CUSTOM_CARRIER, customCarrierName)
+            .apply()
     }
 
     fun refreshLogs() {
         logs = SimOperationLog.read(context)
     }
 
+    suspend fun queueSimRefresh(): Boolean {
+        val result = withContext(Dispatchers.IO) { controller.refreshSimCards() }
+        result.onSuccess {
+            message = "جارٍ قراءة الشرائح وCarrierConfig عبر Wireless ADB؛ سيُعاد فتح التطبيق بعد اكتمال الفحص."
+        }.onFailure {
+            message = "تعذّر تحديث الشرائح: ${it.message ?: it.javaClass.simpleName}"
+        }
+        refreshLogs()
+        return result.isSuccess
+    }
+
     fun refreshConnection() {
         scope.launch {
             busy = true
-            adbState = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
+            val state = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
+            adbState = state
             airplaneMode = withContext(Dispatchers.IO) {
-                runCatching {
-                    Settings.Global.getInt(
-                        context.contentResolver,
-                        Settings.Global.AIRPLANE_MODE_ON,
-                        0,
-                    ) == 1
-                }.getOrDefault(false)
+                runCatching { Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) == 1 }
+                    .getOrDefault(false)
             }
+            simCards = controller.readSimCards()
+            if (state == WirelessDebuggingManager.DebuggingState.READY && !controller.hasSimCache && !controller.operationPending) {
+                queueSimRefresh()
+            }
+            controller.consumeOperationMessage()?.let { message = it }
             busy = false
             refreshLogs()
         }
     }
 
-    LaunchedEffect(Unit) {
-        if (controller.activeProfileId != null) {
-            SimOperatorProfiles.find(controller.activeProfileId)?.let { selectedProfile = it }
+    fun waitForOperationResult() {
+        scope.launch {
+            repeat(60) {
+                delay(500)
+                controller.consumeOperationMessage()?.let {
+                    message = it
+                    simCards = controller.readSimCards()
+                    refreshLogs()
+                    return@launch
+                }
+            }
         }
-        SimOperationLog.info(context, "تم فتح صفحة sim.")
+    }
+
+    fun clearNrfrSelections() {
+        selectedCountryCode = ""
+        customCountryCode = ""
+        isCustomCountryCode = false
+        selectedCarrierId = ""
+        customCarrierName = ""
+        persistUiState()
+    }
+
+    LaunchedEffect(logs) { logScrollState.animateScrollTo(logScrollState.maxValue) }
+
+    LaunchedEffect(Unit) {
+        simCards = controller.readSimCards()
+        if (selectedSubId !in simCards.map { it.subscriptionId }) {
+            selectedSubId = simCards.firstOrNull()?.subscriptionId ?: -1
+            persistUiState()
+        }
+        controller.consumeOperationMessage()?.let { message = it }
+        if (controller.operationPending) message = "عملية SIM قيد التنفيذ؛ انتظر اكتمال Instrumentation وإعادة فتح التطبيق."
+        SimOperationLog.info(context, "فتح صفحة SIM؛ NRFR carrier-config API عبر Wireless ADB المدمج.")
         refreshConnection()
     }
 
@@ -111,9 +188,9 @@ internal fun SimScreen(padding: PaddingValues) {
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text("اختبار خصائص المشغّل", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Text("إعداد CarrierConfig للشريحة", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text(
-                    "يتصل عبر Wireless ADB ويحاول تغيير خصائص gsm.* المؤقتة فقط.",
+                    "نفس ملفات وخيارات NRFR: رمز بلد ISO واسم المشغّل، باستخدام ICarrierConfigLoader عبر Wireless ADB.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -121,8 +198,8 @@ internal fun SimScreen(padding: PaddingValues) {
         }
         item {
             NoticeCard(
-                title = "حدود مهمة قبل التشغيل",
-                body = "هذه الأوامر لا تغيّر IMSI أو ICCID أو بيانات الشريحة أو تسجيلها على الشبكة. خصائص gsm.* محمية ويتحكم بها Android/Telephony، لذلك قد يرفض setprop عبر Wireless ADB العادي؛ عندها سيتوقف الاختبار قبل حفظ جلسة استعادة. يلزم أيضاً تفعيل وضع الطيران يدوياً وإعادة تشغيل Wi‑Fi مع إبقاءه فعالاً حتى يبقى ADB متصلاً.",
+                title = "حدود التغيير",
+                body = "هذا هو نفس مسار NRFR: يحفظ CarrierConfig override بشكل persistent إلى أن تستخدم إعادة التعيين. يغيّر ISO البلد واسم المشغّل فقط؛ لا يغيّر IMSI أو ICCID أو MCC/MNC أو الشبكة الفعلية. لا يحتاج Shizuku أو تطبيق Helper، لكن قد يعيد التطبيق فتح نفسه بعد كل عملية.",
                 color = KunPalette.WarningSoft,
                 textColor = KunPalette.Ink,
             )
@@ -133,26 +210,18 @@ internal fun SimScreen(padding: PaddingValues) {
                 shape = RoundedCornerShape(22.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
-                Column(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("Wireless ADB", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                adbStateLabel(adbState),
-                                color = if (connected) KunPalette.Success else KunPalette.Warning,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
+                            Text("Wireless ADB المدمج", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                            Text(adbStateLabel(adbState), color = if (connected) KunPalette.Success else KunPalette.Warning, style = MaterialTheme.typography.bodySmall)
                         }
                         TextButton(onClick = ::refreshConnection, enabled = !busy) { Text("تحديث") }
                     }
-
                     if (!connected) {
                         Text(
                             "فعّل خيارات المطوّر وWireless debugging، ثم افتح Pair device with pairing code وأدخل الرمز هنا.",
@@ -161,17 +230,15 @@ internal fun SimScreen(padding: PaddingValues) {
                         )
                         OutlinedButton(
                             onClick = {
-                                runCatching {
-                                    context.startActivity(WirelessDebuggingManager.getDebuggingSettingsIntent(context))
-                                }.onFailure {
-                                    message = "تعذر فتح خيارات المطوّر: ${it.message}"
-                                    SimOperationLog.error(context, message.orEmpty())
-                                    refreshLogs()
-                                }
+                                runCatching { context.startActivity(WirelessDebuggingManager.getDebuggingSettingsIntent(context)) }
+                                    .onFailure {
+                                        message = "تعذر فتح خيارات المطوّر: ${it.message}"
+                                        SimOperationLog.error(context, message.orEmpty())
+                                        refreshLogs()
+                                    }
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("فتح خيارات المطوّر") }
-
                         when (adbState) {
                             WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED -> {
                                 Button(
@@ -179,13 +246,10 @@ internal fun SimScreen(padding: PaddingValues) {
                                         scope.launch {
                                             busy = true
                                             SimOperationLog.info(context, "طلب إعادة اتصال Wireless ADB من صفحة SIM.")
-                                            val success = withContext(Dispatchers.IO) {
-                                                WirelessDebuggingManager.connect(context, 0)
-                                            }
-                                            adbState = withContext(Dispatchers.IO) {
-                                                WirelessDebuggingManager.checkState(context)
-                                            }
-                                            message = if (success) "أُعيد الاتصال بنجاح." else "تعذرت إعادة الاتصال. تحقق من Wi‑Fi وWireless debugging."
+                                            val success = withContext(Dispatchers.IO) { WirelessDebuggingManager.connect(context, 0) }
+                                            adbState = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
+                                            message = if (success) "أُعيد الاتصال بنجاح." else "تعذرت إعادة الاتصال؛ تحقق من Wi‑Fi وWireless debugging."
+                                            if (adbState == WirelessDebuggingManager.DebuggingState.READY && !controller.hasSimCache) queueSimRefresh()
                                             busy = false
                                             refreshLogs()
                                         }
@@ -209,17 +273,11 @@ internal fun SimScreen(padding: PaddingValues) {
                                         scope.launch {
                                             busy = true
                                             pairingCode = ""
-                                            SimOperationLog.info(context, "بدء اقتران Wireless ADB من صفحة SIM؛ رمز الاقتران غير مسجل.")
-                                            val result = withContext(Dispatchers.IO) {
-                                                WirelessDebuggingManager.pair(context, code)
-                                            }
-                                            adbState = withContext(Dispatchers.IO) {
-                                                WirelessDebuggingManager.checkState(context)
-                                            }
-                                            message = result.fold(
-                                                { "اكتمل اقتران Wireless ADB." },
-                                                { "فشل الاقتران: ${it.message ?: it.javaClass.simpleName}" },
-                                            )
+                                            SimOperationLog.info(context, "بدء اقتران Wireless ADB؛ رمز الاقتران غير مسجل.")
+                                            val result = withContext(Dispatchers.IO) { WirelessDebuggingManager.pair(context, code) }
+                                            adbState = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
+                                            message = result.fold({ "اكتمل اقتران Wireless ADB." }, { "فشل الاقتران: ${it.message ?: it.javaClass.simpleName}" })
+                                            if (result.isSuccess && !controller.hasSimCache) queueSimRefresh()
                                             busy = false
                                             refreshLogs()
                                         }
@@ -234,10 +292,129 @@ internal fun SimScreen(padding: PaddingValues) {
                             else -> Unit
                         }
                     } else {
-                        Text(
-                            "الجهاز مقترن ومتصل. يمكن للصفحة تنفيذ الأوامر محلياً على هذا الجهاز فقط.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        Text("الجهاز مقترن ومتصل. قد يعيد تشغيل العملية صفحة التطبيق بعد إكمال أمر النظام.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Text("اختيار SIM", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        TextButton(
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    queueSimRefresh()
+                                    busy = false
+                                    waitForOperationResult()
+                                }
+                            },
+                            enabled = connected && !busy && !controller.operationPending,
+                        ) { Text("تحديث الشرائح") }
+                    }
+                    if (simCards.isEmpty()) {
+                        Text("لم تُقرأ أي شريحة بعد. اتصل بـWireless ADB ثم حدّث القائمة.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        simCards.forEach { sim ->
+                            FilterChip(
+                                selected = selectedSubId == sim.subscriptionId,
+                                onClick = {
+                                    selectedSubId = sim.subscriptionId
+                                    persistUiState()
+                                },
+                                enabled = !busy && !controller.operationPending,
+                                label = { Text("SIM ${sim.slot} • ${sim.carrierName.ifBlank { "مشغّل غير معروف" }}") },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        selectedSim?.let { sim ->
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text("CarrierConfig الحالي — SIM ${sim.slot}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        if (sim.currentConfig.isEmpty()) {
+                            Text("لا يوجد override ظاهر حالياً.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            sim.currentConfig.forEach { (key, value) -> Text("$key: $value", style = MaterialTheme.typography.bodyMedium) }
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            ) {
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("رمز البلد", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Box(Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = { countryMenuExpanded = true }, modifier = Modifier.fillMaxWidth(), enabled = !controller.operationPending) {
+                            val countryLabel = if (isCustomCountryCode) "مخصص" else SimNrfrPresets.countries.firstOrNull { it.code == selectedCountryCode }?.let { "${it.label} (${it.code})" } ?: "اختر دولة"
+                            Text(countryLabel)
+                        }
+                        DropdownMenu(
+                            expanded = countryMenuExpanded,
+                            onDismissRequest = { countryMenuExpanded = false },
+                            modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                        ) {
+                            SimNrfrPresets.countries.forEach { country ->
+                                DropdownMenuItem(
+                                    text = { Text("${country.label} (${country.code})") },
+                                    onClick = {
+                                        selectedCountryCode = country.code
+                                        isCustomCountryCode = false
+                                        countryMenuExpanded = false
+                                        message = null
+                                        persistUiState()
+                                    },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("مخصص") },
+                                onClick = {
+                                    isCustomCountryCode = true
+                                    countryMenuExpanded = false
+                                    persistUiState()
+                                },
+                            )
+                        }
+                    }
+                    if (isCustomCountryCode) {
+                        OutlinedTextField(
+                            value = customCountryCode,
+                            onValueChange = {
+                                if (it.length <= 2 && it.all(Char::isLetter)) {
+                                    customCountryCode = it.uppercase()
+                                    selectedCountryCode = customCountryCode
+                                    persistUiState()
+                                }
+                            },
+                            label = { Text("رمز ISO مخصص — حرفان") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                            enabled = !controller.operationPending,
                         )
                     }
                 }
@@ -249,31 +426,59 @@ internal fun SimScreen(padding: PaddingValues) {
                 shape = RoundedCornerShape(22.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
-                Column(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text("الدولة / ملف المشغّل", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    SimOperatorProfiles.all.forEach { profile ->
-                        FilterChip(
-                            selected = selectedProfile.id == profile.id,
-                            onClick = {
-                                if (!pendingRestore) {
-                                    selectedProfile = profile
-                                    message = null
-                                }
-                            },
-                            label = {
-                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(profile.label, fontWeight = FontWeight.SemiBold)
-                                    Text(
-                                        "MCC/MNC ${profile.operatorNumeric} • ISO ${profile.isoCountry}",
-                                        style = MaterialTheme.typography.labelSmall,
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("اسم المشغّل", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                    Box(Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = { carrierMenuExpanded = true }, modifier = Modifier.fillMaxWidth(), enabled = !controller.operationPending) {
+                            Text(selectedCarrier?.label ?: "اختر مشغّلاً")
+                        }
+                        DropdownMenu(
+                            expanded = carrierMenuExpanded,
+                            onDismissRequest = { carrierMenuExpanded = false },
+                            modifier = Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
+                        ) {
+                            SimNrfrPresets.carriers.filterNot { it.custom }.groupBy { it.region }.forEach { (region, carriers) ->
+                                val regionLabel = SimNrfrPresets.countries.firstOrNull { it.code == region }?.label ?: region
+                                Text(regionLabel, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall)
+                                carriers.forEach { carrier ->
+                                    DropdownMenuItem(
+                                        text = { Text(carrier.label) },
+                                        onClick = {
+                                            selectedCarrierId = carrier.id
+                                            customCarrierName = carrier.displayName
+                                            carrierMenuExpanded = false
+                                            message = null
+                                            persistUiState()
+                                        },
                                     )
                                 }
+                            }
+                            DropdownMenuItem(
+                                text = { Text("مخصص") },
+                                onClick = {
+                                    selectedCarrierId = SimNrfrPresets.carriers.first { it.custom }.id
+                                    carrierMenuExpanded = false
+                                    persistUiState()
+                                },
+                            )
+                        }
+                    }
+                    selectedCarrier?.let { carrier ->
+                        if (!carrier.custom && carrier.displayName.isNotBlank()) {
+                            Text("القيمة المرسلة: ${carrier.displayName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    if (selectedCarrier?.custom == true) {
+                        OutlinedTextField(
+                            value = customCarrierName,
+                            onValueChange = {
+                                customCarrierName = it
+                                persistUiState()
                             },
-                            enabled = !pendingRestore,
+                            label = { Text("اسم المشغّل المخصص") },
                             modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            enabled = !controller.operationPending,
                         )
                     }
                 }
@@ -283,34 +488,20 @@ internal fun SimScreen(padding: PaddingValues) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (airplaneMode) KunPalette.SuccessSoft else MaterialTheme.colorScheme.surface,
-                ),
+                colors = CardDefaults.cardColors(containerColor = if (airplaneMode) KunPalette.SuccessSoft else MaterialTheme.colorScheme.surface),
             ) {
-                Column(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(9.dp),
-                ) {
-                    Text(
-                        if (airplaneMode) "وضع الطيران مفعّل" else "وضع الطيران غير مفعّل",
-                        fontWeight = FontWeight.Bold,
-                        color = if (airplaneMode) KunPalette.Success else KunPalette.Warning,
-                    )
-                    Text(
-                        "فعّله من إعدادات Android بنفسك. إذا أوقف وضع الطيران Wi‑Fi، أعد تشغيل Wi‑Fi قبل تنفيذ الأوامر حتى يبقى اتصال ADB قائماً.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    TextButton(onClick = ::refreshConnection, enabled = !busy) {
-                        Text("تحقق من حالة وضع الطيران وADB")
-                    }
+                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (airplaneMode) "وضع الطيران مفعّل" else "وضع الطيران غير مفعّل", fontWeight = FontWeight.Bold, color = if (airplaneMode) KunPalette.Success else KunPalette.Warning)
+                    Text("وضع الطيران غير مطلوب؛ أبقِ Wi‑Fi وWireless debugging فعالين.", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = ::refreshConnection, enabled = !busy) { Text("تحديث حالة ADB") }
                 }
             }
         }
-        if (pendingRestore) {
+        if (controller.operationPending) {
             item {
                 NoticeCard(
-                    title = "هناك جلسة تنتظر الاستعادة",
-                    body = "الملف المحفوظ: ${SimOperatorProfiles.find(controller.activeProfileId)?.label ?: "غير معروف"}. تبقى النسخة الأصلية على الجهاز حتى نجاح الاستعادة والتحقق منها.",
+                    title = "جاري تنفيذ أمر النظام",
+                    body = "يعمل ICarrierConfigLoader داخل Instrumentation المضمّن. اترك Wireless debugging فعالاً؛ قد يعيد التطبيق فتح نفسه عند انتهاء الأمر.",
                     color = KunPalette.WarningSoft,
                     textColor = KunPalette.Ink,
                 )
@@ -318,68 +509,65 @@ internal fun SimScreen(padding: PaddingValues) {
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                if (pendingRestore) {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                busy = true
-                                val result = withContext(Dispatchers.IO) { controller.restore() }
-                                message = result.fold(
-                                    { "اكتملت الاستعادة والتحقق من القيم الأصلية." },
-                                    { "تعذرت الاستعادة: ${it.message ?: it.javaClass.simpleName}" },
-                                )
-                                busy = false
-                                refreshLogs()
+                OutlinedButton(
+                    onClick = {
+                        val sim = selectedSim ?: return@OutlinedButton
+                        scope.launch {
+                            busy = true
+                            val result = withContext(Dispatchers.IO) { controller.resetCarrierConfig(sim) }
+                            if (result.isSuccess) {
+                                clearNrfrSelections()
+                                message = "أُرسل طلب إعادة التعيين؛ سيظهر التأكيد بعد عودة التطبيق."
+                            } else {
+                                message = "فشل بدء إعادة التعيين: ${result.exceptionOrNull()?.message}"
                             }
-                        },
-                        enabled = connected && !busy,
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = KunPalette.Success),
-                        shape = RoundedCornerShape(16.dp),
-                    ) {
-                        if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                        else Text("إيقاف واستعادة الأصل", fontWeight = FontWeight.Bold)
-                    }
-                } else {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                busy = true
-                                message = null
-                                val result = withContext(Dispatchers.IO) {
-                                    controller.apply(selectedProfile)
-                                }
-                                message = result.fold(
-                                    { "نجح التغيير المؤقت وتم التحقق من الخصائص. استخدم زر الاستعادة عند الانتهاء." },
-                                    { "لم يكتمل التغيير: ${it.message ?: it.javaClass.simpleName}" },
-                                )
-                                busy = false
-                                refreshLogs()
-                            }
-                        },
-                        enabled = connected && airplaneMode && !busy,
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        shape = RoundedCornerShape(16.dp),
-                    ) {
-                        if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                        else Text("تشغيل اختبار ${selectedProfile.isoCountry.uppercase()}", fontWeight = FontWeight.Bold)
-                    }
+                            busy = false
+                            refreshLogs()
+                            if (result.isSuccess) waitForOperationResult()
+                        }
+                    },
+                    enabled = selectedSim != null && connected && !busy && !controller.operationPending,
+                    modifier = Modifier.weight(1f).height(52.dp),
+                ) { Text("إعادة تعيين") }
+                Button(
+                    onClick = {
+                        val sim = selectedSim ?: return@Button
+                        val country = if (isCustomCountryCode) customCountryCode.takeIf { it.length == 2 } else selectedCountryCode.takeIf { it.isNotEmpty() }
+                        val carrierName = when {
+                            selectedCarrier?.custom == true -> customCarrierName.takeIf { it.isNotEmpty() }
+                            selectedCarrier != null -> selectedCarrier.displayName
+                            else -> null
+                        }
+                        scope.launch {
+                            busy = true
+                            val result = withContext(Dispatchers.IO) { controller.saveCarrierConfig(sim, country, carrierName) }
+                            message = if (result.isSuccess) "أُرسل طلب الحفظ؛ سيظهر التأكيد بعد عودة التطبيق." else "فشل بدء الحفظ: ${result.exceptionOrNull()?.message}"
+                            busy = false
+                            refreshLogs()
+                            if (result.isSuccess) waitForOperationResult()
+                        }
+                    },
+                    enabled = selectedSim != null && connected && !busy && !controller.operationPending && (
+                        (isCustomCountryCode && customCountryCode.length == 2) ||
+                            (!isCustomCountryCode && selectedCountryCode.isNotEmpty()) ||
+                            (selectedCarrier != null && (!selectedCarrier.custom || customCarrierName.isNotEmpty()))
+                        ),
+                    modifier = Modifier.weight(1f).height(52.dp),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                    else Text("حفظ وتطبيق")
                 }
             }
         }
-        message?.let { text ->
-            item { InlineMessage(text) }
-        }
+        message?.let { text -> item { InlineMessage(text) } }
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(22.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             ) {
-                Column(
-                    Modifier.fillMaxWidth().padding(15.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
+                Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -404,14 +592,12 @@ internal fun SimScreen(padding: PaddingValues) {
                         }
                     }
                     if (logs.isEmpty()) {
-                        Text("ستظهر هنا حالة الاقتران، أوامر ADB، ردود النظام، والتحقق أو سبب الخطأ.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("ستظهر هنا حالة ADB وأمر النظام ونتيجة العملية أو سبب الخطأ.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         Column(
-                            Modifier.fillMaxWidth()
-                                .height(320.dp)
+                            Modifier.fillMaxWidth().height(320.dp)
                                 .background(Color(0xFF101510), RoundedCornerShape(14.dp))
-                                .verticalScroll(logScrollState)
-                                .padding(12.dp),
+                                .verticalScroll(logScrollState).padding(12.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             logs.takeLast(80).forEach { entry ->
@@ -421,22 +607,14 @@ internal fun SimScreen(padding: PaddingValues) {
                                     "OUT" -> Color(0xFFD6DED6)
                                     else -> Color(0xFF8CC8FF)
                                 }
-                                val command = entry.message.removePrefix("$ ")
-                                    .replace("\\n", "\n")
-                                    .replace("\\r", "\r")
+                                val command = entry.message.removePrefix("$ ").replace("\\n", "\n").replace("\\r", "\r")
                                 val prompt = when (entry.level) {
                                     "CMD" -> "adb$ $command"
                                     "ERR" -> "ERROR  $command"
                                     "OUT" -> command
                                     else -> "INFO   $command"
                                 }
-                                Text(
-                                    "[${entry.timestamp}] $prompt",
-                                    fontFamily = FontFamily.Monospace,
-                                    fontSize = 11.sp,
-                                    color = lineColor,
-                                    lineHeight = 16.sp,
-                                )
+                                Text("[${entry.timestamp}] $prompt", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = lineColor, lineHeight = 16.sp)
                             }
                         }
                     }
@@ -448,15 +626,8 @@ internal fun SimScreen(padding: PaddingValues) {
 
 @Composable
 private fun NoticeCard(title: String, body: String, color: Color, textColor: Color) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = color),
-    ) {
-        Column(
-            Modifier.fillMaxWidth().padding(15.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = color)) {
+        Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.Bold, color = textColor)
             Text(body, style = MaterialTheme.typography.bodySmall, color = textColor)
         }
@@ -465,17 +636,8 @@ private fun NoticeCard(title: String, body: String, color: Color, textColor: Col
 
 @Composable
 private fun InlineMessage(message: String) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer,
-    ) {
-        Text(
-            message,
-            Modifier.padding(12.dp),
-            style = MaterialTheme.typography.bodySmall,
-            textAlign = TextAlign.Start,
-        )
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+        Text(message, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Start)
     }
 }
 
