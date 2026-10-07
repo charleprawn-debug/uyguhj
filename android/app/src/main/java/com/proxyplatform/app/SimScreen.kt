@@ -197,7 +197,7 @@ internal fun SimScreen(padding: PaddingValues) {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("إعداد CarrierConfig للشريحة", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text(
-                    "نفس ملفات وخيارات NRFR: رمز بلد ISO واسم المشغّل، باستخدام ICarrierConfigLoader عبر Wireless ADB.",
+                    "نفس ملفات وخيارات NRFR: رمز بلد ISO واسم المشغّل، باستخدام ICarrierConfigLoader عبر Wireless ADB المضمّن.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -206,7 +206,7 @@ internal fun SimScreen(padding: PaddingValues) {
         item {
             NoticeCard(
                 title = "حدود التغيير",
-                body = "هذا هو نفس مسار NRFR: يحفظ CarrierConfig override بشكل persistent إلى أن تستخدم إعادة التعيين. يغيّر ISO البلد واسم المشغّل فقط؛ لا يغيّر IMSI أو ICCID أو MCC/MNC أو الشبكة الفعلية. لا يحتاج Shizuku أو تطبيق Helper، لكن قد يعيد التطبيق فتح نفسه بعد كل عملية.",
+                body = "هذا هو نفس مسار NRFR في CarrierConfig: يحفظ override بشكل persistent إلى أن تستخدم إعادة التعيين. يغيّر ISO البلد واسم المشغّل فقط؛ لا يغيّر IMSI أو ICCID أو MCC/MNC أو الشبكة الفعلية. التنفيذ عبر Wireless ADB المضمّن.",
                 color = KunPalette.WarningSoft,
                 textColor = KunPalette.Ink,
             )
@@ -508,7 +508,7 @@ internal fun SimScreen(padding: PaddingValues) {
             item {
                 NoticeCard(
                     title = "جاري تنفيذ أمر النظام",
-                    body = "يعمل ICarrierConfigLoader داخل Instrumentation المضمّن. اترك Wireless debugging فعالاً حتى يعود تأكيد Android النهائي.",
+                    body = "يعمل ICarrierConfigLoader داخل Instrumentation المضمّن عبر Wireless ADB. انتظر تأكيد Android النهائي.",
                     color = KunPalette.WarningSoft,
                     textColor = KunPalette.Ink,
                 )
