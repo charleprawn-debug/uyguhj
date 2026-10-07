@@ -117,7 +117,8 @@ internal fun SimScreen(padding: PaddingValues) {
     suspend fun queueSimRefresh(): Boolean {
         val result = withContext(Dispatchers.IO) { controller.refreshSimCards() }
         result.onSuccess {
-            message = "جارٍ قراءة الشرائح وCarrierConfig عبر Wireless ADB؛ سيُعاد فتح التطبيق بعد اكتمال الفحص."
+            simCards = controller.readSimCards()
+            message = "تم تحديث قائمة الشرائح وقراءة CarrierConfig عبر Wireless ADB المضمّن."
         }.onFailure {
             message = "تعذّر تحديث الشرائح: ${it.message ?: it.javaClass.simpleName}"
         }
@@ -146,6 +147,12 @@ internal fun SimScreen(padding: PaddingValues) {
 
     fun waitForOperationResult() {
         scope.launch {
+            controller.consumeOperationMessage()?.let {
+                message = it
+                simCards = controller.readSimCards()
+                refreshLogs()
+                return@launch
+            }
             repeat(60) {
                 delay(500)
                 controller.consumeOperationMessage()?.let {
@@ -176,7 +183,7 @@ internal fun SimScreen(padding: PaddingValues) {
             persistUiState()
         }
         controller.consumeOperationMessage()?.let { message = it }
-        if (controller.operationPending) message = "عملية SIM قيد التنفيذ؛ انتظر اكتمال Instrumentation وإعادة فتح التطبيق."
+        if (controller.operationPending) message = "عملية SIM قيد التنفيذ؛ انتظر اكتمال Instrumentation عبر ADB المضمّن."
         SimOperationLog.info(context, "فتح صفحة SIM؛ NRFR carrier-config API عبر Wireless ADB المدمج.")
         refreshConnection()
     }
@@ -292,7 +299,7 @@ internal fun SimScreen(padding: PaddingValues) {
                             else -> Unit
                         }
                     } else {
-                        Text("الجهاز مقترن ومتصل. قد يعيد تشغيل العملية صفحة التطبيق بعد إكمال أمر النظام.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("الجهاز مقترن ومتصل. تبقى العملية متصلة بـADB حتى يعود تأكيد Android النهائي.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -501,7 +508,7 @@ internal fun SimScreen(padding: PaddingValues) {
             item {
                 NoticeCard(
                     title = "جاري تنفيذ أمر النظام",
-                    body = "يعمل ICarrierConfigLoader داخل Instrumentation المضمّن. اترك Wireless debugging فعالاً؛ قد يعيد التطبيق فتح نفسه عند انتهاء الأمر.",
+                    body = "يعمل ICarrierConfigLoader داخل Instrumentation المضمّن. اترك Wireless debugging فعالاً حتى يعود تأكيد Android النهائي.",
                     color = KunPalette.WarningSoft,
                     textColor = KunPalette.Ink,
                 )
