@@ -29,17 +29,18 @@ class SimOperatorProfilesTest {
     }
 
     @Test
-    fun detachedCommandCallsTheSameApkInstrumentationAndRelaunchesApp() {
-        val command = SimOperatorCommands.buildDetachedInstrumentationCommand(
+    fun commandCallsTheSameApkInstrumentationSynchronously() {
+        val command = SimOperatorCommands.buildInstrumentationCommand(
             packageName = "com.proxyplatform.app.debug",
             operation = "save",
             arguments = mapOf("subId" to "42", "countryCode" to "US", "carrierName" to "T-Mobile USA"),
         )
-        assertTrue(command.startsWith("nohup sh -c "))
+        assertTrue(command.startsWith("'am' 'instrument' '-w' '-r'"))
         assertTrue(command.contains("com.proxyplatform.app.debug/com.proxyplatform.app.SimCarrierConfigInstrumentation"))
         assertTrue(command.contains("subId"))
         assertTrue(command.contains("T-Mobile USA"))
-        assertTrue(command.contains("monkey -p "))
+        assertTrue(!command.contains("nohup"))
+        assertTrue(!command.contains("monkey -p "))
         assertTrue(!command.contains("setprop"))
         assertTrue(!command.contains("shizuku"))
     }
