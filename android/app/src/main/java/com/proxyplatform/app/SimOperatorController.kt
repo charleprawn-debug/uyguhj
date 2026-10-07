@@ -45,7 +45,7 @@ internal object SimOperatorCommands {
 
     fun quote(value: String): String = "'${value.replace("'", "'\\''")}'"
 
-    fun buildDetachedInstrumentationCommand(
+    fun buildInstrumentationCommand(
         packageName: String,
         operation: String,
         arguments: Map<String, String>,
@@ -54,10 +54,12 @@ internal object SimOperatorCommands {
         arguments.forEach { (key, value) -> args += listOf("-e", key, value) }
         args += listOf("-e", "operation", operation)
         args += "$packageName/$INSTRUMENTATION_CLASS"
-        val instrument = args.joinToString(" ") { quote(it) }
-        val script = "sleep 1; $instrument; __kun_sim_rc=\$?; " +
-            "monkey -p ${quote(packageName)} 1 >/dev/null 2>&1; exit \$__kun_sim_rc"
-        return "nohup sh -c ${quote(script)} </dev/null >/dev/null 2>&1 &"
+        // Keep am instrument attached to the ADB stream.  Detaching it with
+        // nohup/background makes the shell report success before Instrumentation
+        // has written the SIM cache, and Android may kill the orphaned process.
+        // The caller needs the synchronous result to distinguish a real refresh
+        // from merely submitting a command.
+        return args.joinToString(" ") { quote(it) }
     }
 }
 
@@ -137,6 +139,10 @@ internal class SimOperatorController(context: Context) {
     }
 
     private fun queueInstrumentation(operation: String, arguments: Map<String, String>) {
+        // A previous app process may have died after the old detached command
+        // was submitted.  Clear only operations that are genuinely stale so a
+        // normal in-flight command is still protected from a duplicate request.
+        recoverStaleOperationIfNeeded()
         check(!operationPending) { "هناك عملية SIM قيد التنفيذ؛ انتظر انتهاءها." }
         check(prefs.edit()
             .putBoolean(SimCarrierPrefs.OPERATION_PENDING, true)
@@ -147,7 +153,7 @@ internal class SimOperatorController(context: Context) {
             .remove(SimCarrierPrefs.OUTCOME_TIME)
             .commit()) { "تعذر حفظ طلب العملية على الجهاز." }
 
-        val command = SimOperatorCommands.buildDetachedInstrumentationCommand(
+        val command = SimOperatorCommands.buildInstrumentationCommand(
             packageName = appContext.packageName,
             operation = operation,
             arguments = arguments,
@@ -155,15 +161,32 @@ internal class SimOperatorController(context: Context) {
         SimOperationLog.command(appContext, command)
         try {
             val output = WirelessDebuggingManager.executeCommandResult(appContext, command).getOrThrow()
-            SimOperationLog.output(appContext, output.ifBlank { "تم تسليم أمر Instrumentation إلى shell بالخلفية." })
-            SimOperationLog.info(appContext, "بدأت عملية $operation عبر Wireless ADB؛ قد يعيد التطبيق فتح نفسه.")
+            SimOperationLog.output(appContext, output.ifBlank { "اكتملت عملية Instrumentation دون مخرجات إضافية." })
+            check(instrumentationSucceeded(output)) {
+                "أعاد Android نتيجة Instrumentation غير ناجحة؛ راجع سجل العملية للتفاصيل."
+            }
+            SimOperationLog.info(appContext, "اكتملت عملية $operation بنجاح عبر Wireless ADB المضمّن.")
         } catch (failure: Throwable) {
             saveOperationResult(
                 success = false,
-                message = "فشل إطلاق Instrumentation عبر ADB: ${failure.message ?: failure.javaClass.simpleName}",
+                message = "فشلت عملية SIM عبر ADB: ${failure.message ?: failure.javaClass.simpleName}",
             )
             throw failure
         }
+    }
+
+    private fun instrumentationSucceeded(output: String): Boolean {
+        // `am instrument -w` returns a shell success code even for some
+        // instrumentation-level failures, so inspect the protocol result too.
+        val statusCode = Regex("(?m)^INSTRUMENTATION_CODE:\\s*(-?\\d+)\\s*$")
+            .find(output)?.groupValues?.getOrNull(1)?.toIntOrNull()
+        val explicitFailure = Regex("(?m)^INSTRUMENTATION_STATUS: (?:Error|shortMsg|failure):\\s*(.+)$")
+            .find(output)
+        val resultCode = Regex("(?m)^INSTRUMENTATION_RESULT:.*(?:\\n|$)")
+            .find(output)?.value.orEmpty()
+        val failedResult = resultCode.contains("shortMsg=", ignoreCase = true) ||
+            resultCode.contains("Error=", ignoreCase = true)
+        return statusCode == null || (statusCode == 0 && explicitFailure == null && !failedResult)
     }
 
     private fun recoverStaleOperationIfNeeded() {
@@ -285,9 +308,28 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
         val telephonyManager = targetContext.getSystemService(TelephonyManager::class.java)
             ?: error("خدمة الهاتف غير متاحة.")
         val result = mutableListOf<SimCardInfo>()
-        for (slotIndex in 0..1) {
-            val subId = subscriptionIdForSlot(subscriptionManager, slotIndex) ?: continue
-            val config = service.getConfigForSubId(subId, targetContext.packageName)
+        val activeSubscriptions = runCatching {
+            subscriptionManager.activeSubscriptionInfoList.orEmpty()
+                .filter { it.subscriptionId >= 0 && it.simSlotIndex >= 0 }
+                .map { it.simSlotIndex to it.subscriptionId }
+                .distinctBy { it.second }
+        }.getOrDefault(emptyList())
+        val slotsToRead = if (activeSubscriptions.isNotEmpty()) {
+            activeSubscriptions
+        } else {
+            // Some OEMs return null here even under shell identity; retain the
+            // slot-based fallback used by older Android telephony services.
+            (0..1).mapNotNull { slotIndex ->
+                subscriptionIdForSlot(subscriptionManager, slotIndex)?.let { slotIndex to it }
+            }
+        }
+        for ((slotIndex, subId) in slotsToRead) {
+            // NRFR treats an unreadable CarrierConfig as an empty override and
+            // still exposes the SIM.  Keep the same per-SIM fault isolation so
+            // one OEM-specific config failure cannot hide every active SIM.
+            val config = runCatching {
+                service.getConfigForSubId(subId, targetContext.packageName)
+            }.getOrNull()
             val current = linkedMapOf<String, String>()
             config?.getString(AndroidCarrierConfigManager.KEY_SIM_COUNTRY_ISO_OVERRIDE_STRING)
                 ?.takeIf { it.isNotEmpty() }?.let { current["رمز البلد"] = it }
