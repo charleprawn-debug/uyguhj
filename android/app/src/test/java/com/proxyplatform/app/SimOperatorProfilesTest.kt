@@ -35,7 +35,7 @@ class SimOperatorProfilesTest {
             operation = "save",
             arguments = mapOf("subId" to "42", "countryCode" to "US", "carrierName" to "T-Mobile USA"),
         )
-        assertTrue(command.startsWith("'am' 'instrument' '-w' '-r'"))
+        assertTrue(command.startsWith("'am' 'instrument' '-w' '-r' '--no-restart'"))
         assertTrue(command.contains("com.proxyplatform.app.debug/com.proxyplatform.app.SimCarrierConfigInstrumentation"))
         assertTrue(command.contains("subId"))
         assertTrue(command.contains("T-Mobile USA"))
