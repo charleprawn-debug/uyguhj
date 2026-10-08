@@ -190,7 +190,14 @@ internal class SimOperatorController(context: Context) {
             .find(output)?.value.orEmpty()
         val failedResult = resultCode.contains("shortMsg=", ignoreCase = true) ||
             resultCode.contains("Error=", ignoreCase = true)
-        return statusCode == null || (statusCode == 0 && explicitFailure == null && !failedResult)
+        val reportedSuccess = Regex("(?i)INSTRUMENTATION_RESULT:\\s*success=true")
+            .containsMatchIn(output)
+        // Android's Instrumentation.finish() uses Activity.RESULT_OK (-1),
+        // not shell exit code 0. Treat -1 as success when the protocol also
+        // reports success=true; otherwise successful refresh/save operations
+        // are incorrectly shown as failures in the SIM screen.
+        return explicitFailure == null && !failedResult &&
+            (statusCode == null || statusCode == 0 || (statusCode == Activity.RESULT_OK && reportedSuccess))
     }
 
     private fun recoverStaleOperationIfNeeded() {
