@@ -50,10 +50,10 @@ internal object SimOperatorCommands {
         operation: String,
         arguments: Map<String, String>,
     ): String {
-        // The instrumentation targets the framework package (android) so the
-        // UI APK is not restarted. Android requires --no-restart for system
-        // server instrumentation; without it every refresh fails before our
-        // CarrierConfig code is reached.
+        // Instrumentation targets the owning APK because Android rejects a
+        // third-party APK that tries to instrument the signed system package.
+        // --no-restart prevents ActivityManager from restarting the UI while
+        // the shell-launched CarrierConfig operation is running.
         val args = mutableListOf("am", "instrument", "-w", "-r", "--no-restart")
         arguments.forEach { (key, value) -> args += listOf("-e", key, value) }
         args += listOf("-e", "operation", operation)
@@ -226,9 +226,8 @@ internal class SimOperatorController(context: Context) {
 
 /**
  * NRFR-equivalent calls run under shell identity, transported by this app's
- * Wireless ADB. The manifest targets the framework package deliberately: if
- * this APK targets itself, ActivityManager restarts the UI process whenever
- * `am instrument` starts and the user is thrown out of the app.
+ * Wireless ADB. The instrumentation targets this APK and uses no-restart so
+ * the shell-launched operation does not throw the user out of the UI.
  */
 class SimCarrierConfigInstrumentation : Instrumentation() {
     @TargetApi(Build.VERSION_CODES.R)
