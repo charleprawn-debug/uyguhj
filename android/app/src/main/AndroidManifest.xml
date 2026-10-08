@@ -4,7 +4,10 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <instrumentation
         android:name="com.proxyplatform.app.SimCarrierConfigInstrumentation"
-        android:targetPackage="${applicationId}"
+        <!-- Target the stable framework package, not this UI APK. Targeting
+             this APK makes ActivityManager restart/kill the app process every
+             time am instrument starts, which caused the observed app exit. -->
+        android:targetPackage="android"
         android:handleProfiling="false"
         android:functionalTest="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
