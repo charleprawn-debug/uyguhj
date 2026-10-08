@@ -120,7 +120,7 @@ internal fun SimScreen(padding: PaddingValues) {
             }
             controller.consumeOperationMessage()?.let { message = it }
             busy = false
-            }
+        }
     }
 
     fun waitForOperationResult() {
@@ -128,14 +128,14 @@ internal fun SimScreen(padding: PaddingValues) {
             controller.consumeOperationMessage()?.let {
                 message = it
                 simCards = controller.readSimCards()
-                        return@launch
+                return@launch
             }
             repeat(60) {
                 delay(500)
                 controller.consumeOperationMessage()?.let {
                     message = it
                     simCards = controller.readSimCards()
-                                return@launch
+                    return@launch
                 }
             }
         }
