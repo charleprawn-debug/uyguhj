@@ -50,7 +50,11 @@ internal object SimOperatorCommands {
         operation: String,
         arguments: Map<String, String>,
     ): String {
-        val args = mutableListOf("am", "instrument", "-w", "-r")
+        // The instrumentation targets the framework package (android) so the
+        // UI APK is not restarted. Android requires --no-restart for system
+        // server instrumentation; without it every refresh fails before our
+        // CarrierConfig code is reached.
+        val args = mutableListOf("am", "instrument", "-w", "-r", "--no-restart")
         arguments.forEach { (key, value) -> args += listOf("-e", key, value) }
         args += listOf("-e", "operation", operation)
         args += "$packageName/$INSTRUMENTATION_CLASS"
