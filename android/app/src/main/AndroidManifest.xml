@@ -2,12 +2,12 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <!-- Target the stable framework package, not this UI APK. Targeting this
-         APK makes ActivityManager restart/kill the app process whenever
-         am instrument starts. -->
+    <!-- Instrument the owning APK. A third-party APK cannot instrument the
+         signed system package android; the no-restart flag keeps this UI process
+         from being restarted while the shell-launched operation runs. -->
     <instrumentation
         android:name="com.proxyplatform.app.SimCarrierConfigInstrumentation"
-        android:targetPackage="android"
+        android:targetPackage="${applicationId}"
         android:handleProfiling="false"
         android:functionalTest="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
