@@ -220,7 +220,12 @@ internal class SimOperatorController(context: Context) {
     }
 }
 
-/** The NRFR API calls run under shell identity, but their transport is the app's own Wireless ADB. */
+/**
+ * NRFR-equivalent calls run under shell identity, transported by this app's
+ * Wireless ADB. The manifest targets the framework package deliberately: if
+ * this APK targets itself, ActivityManager restarts the UI process whenever
+ * `am instrument` starts and the user is thrown out of the app.
+ */
 class SimCarrierConfigInstrumentation : Instrumentation() {
     @TargetApi(Build.VERSION_CODES.R)
     override fun onCreate(arguments: Bundle) {
@@ -263,7 +268,7 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
                     val bundle = buildNrfrOverride(countryCode, carrierName)
                     service.overrideConfig(subId, bundle, true)
                     SimOperationLog.info(
-                        targetContext,
+                        context,
                         "تم استدعاء ICarrierConfigLoader.overrideConfig(subId=$subId, persistent=true) لــSIM $slot.",
                     )
                     saveSimCards(readSimCards(service))
@@ -274,7 +279,7 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
                     val slot = arguments.getString("slot")?.toIntOrNull() ?: error("رقم منفذ SIM غير صالح.")
                     service.overrideConfig(subId, null, true)
                     SimOperationLog.info(
-                        targetContext,
+                        context,
                         "تم استدعاء ICarrierConfigLoader.overrideConfig(subId=$subId, null, persistent=true) لــSIM $slot.",
                     )
                     saveSimCards(readSimCards(service))
@@ -289,7 +294,7 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
             result.putString("error", failure.rootCause().message ?: failure.rootCause().javaClass.simpleName)
             Log.e(TAG, "NRFR-compatible CarrierConfig operation failed", failure)
             SimOperationLog.error(
-                targetContext,
+                context,
                 "فشل CarrierConfig: ${failure.rootCause().message ?: failure.rootCause().javaClass.simpleName}",
             )
             finishOperation(
@@ -303,9 +308,9 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
     }
 
     private fun readSimCards(service: CarrierConfigService): List<SimCardInfo> {
-        val subscriptionManager = targetContext.getSystemService(SubscriptionManager::class.java)
+        val subscriptionManager = context.getSystemService(SubscriptionManager::class.java)
             ?: error("خدمة إدارة الشرائح غير متاحة.")
-        val telephonyManager = targetContext.getSystemService(TelephonyManager::class.java)
+        val telephonyManager = context.getSystemService(TelephonyManager::class.java)
             ?: error("خدمة الهاتف غير متاحة.")
         val result = mutableListOf<SimCardInfo>()
         val activeSubscriptions = runCatching {
@@ -328,7 +333,7 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
             // still exposes the SIM.  Keep the same per-SIM fault isolation so
             // one OEM-specific config failure cannot hide every active SIM.
             val config = runCatching {
-                service.getConfigForSubId(subId, targetContext.packageName)
+                service.getConfigForSubId(subId, context.packageName)
             }.getOrNull()
             val current = linkedMapOf<String, String>()
             config?.getString(AndroidCarrierConfigManager.KEY_SIM_COUNTRY_ISO_OVERRIDE_STRING)
@@ -385,7 +390,7 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
                     .put("currentConfig", config),
             )
         }
-        val prefs = targetContext.getSharedPreferences(SimCarrierPrefs.PREFS, Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(SimCarrierPrefs.PREFS, Context.MODE_PRIVATE)
         check(prefs.edit()
             .putString(SimCarrierPrefs.SIM_CARDS_JSON, array.toString())
             .putLong(SimCarrierPrefs.SIM_CACHE_TIME, System.currentTimeMillis())
@@ -393,7 +398,7 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
     }
 
     private fun finishOperation(success: Boolean, message: String) {
-        val prefs = targetContext.getSharedPreferences(SimCarrierPrefs.PREFS, Context.MODE_PRIVATE)
+        val prefs = context.getSharedPreferences(SimCarrierPrefs.PREFS, Context.MODE_PRIVATE)
         check(prefs.edit()
             .putBoolean(SimCarrierPrefs.OPERATION_PENDING, false)
             .remove(SimCarrierPrefs.OPERATION_KIND)
