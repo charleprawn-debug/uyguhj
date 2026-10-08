@@ -1,11 +1,6 @@
 package com.proxyplatform.app
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
-import android.provider.Settings
-import android.widget.Toast
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,11 +13,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -50,13 +42,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.proxyplatform.app.adb.PairingCodeInput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -90,11 +80,8 @@ internal fun SimScreen(padding: PaddingValues) {
     var countryMenuExpanded by remember { mutableStateOf(false) }
     var carrierMenuExpanded by remember { mutableStateOf(false) }
     var pairingCode by remember { mutableStateOf("") }
-    var airplaneMode by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    var logs by remember { mutableStateOf(SimOperationLog.read(context)) }
-    val logScrollState = rememberScrollState()
     val connected = adbState == WirelessDebuggingManager.DebuggingState.READY
     val selectedSim = simCards.firstOrNull { it.subscriptionId == selectedSubId } ?: simCards.firstOrNull()
     val selectedCarrier = SimNrfrPresets.carriers.firstOrNull { it.id == selectedCarrierId }
@@ -110,19 +97,14 @@ internal fun SimScreen(padding: PaddingValues) {
             .apply()
     }
 
-    fun refreshLogs() {
-        logs = SimOperationLog.read(context)
-    }
-
     suspend fun queueSimRefresh(): Boolean {
         val result = withContext(Dispatchers.IO) { controller.refreshSimCards() }
         result.onSuccess {
             simCards = controller.readSimCards()
-            message = "تم تحديث قائمة الشرائح وقراءة CarrierConfig عبر Wireless ADB المضمّن."
+            message = "تم تحديث قائمة الشرائح."
         }.onFailure {
             message = "تعذّر تحديث الشرائح: ${it.message ?: it.javaClass.simpleName}"
         }
-        refreshLogs()
         return result.isSuccess
     }
 
@@ -131,18 +113,13 @@ internal fun SimScreen(padding: PaddingValues) {
             busy = true
             val state = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
             adbState = state
-            airplaneMode = withContext(Dispatchers.IO) {
-                runCatching { Settings.Global.getInt(context.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) == 1 }
-                    .getOrDefault(false)
-            }
             simCards = controller.readSimCards()
             if (state == WirelessDebuggingManager.DebuggingState.READY && !controller.hasSimCache && !controller.operationPending) {
                 queueSimRefresh()
             }
             controller.consumeOperationMessage()?.let { message = it }
             busy = false
-            refreshLogs()
-        }
+            }
     }
 
     fun waitForOperationResult() {
@@ -150,22 +127,20 @@ internal fun SimScreen(padding: PaddingValues) {
             controller.consumeOperationMessage()?.let {
                 message = it
                 simCards = controller.readSimCards()
-                refreshLogs()
-                return@launch
+                        return@launch
             }
             repeat(60) {
                 delay(500)
                 controller.consumeOperationMessage()?.let {
                     message = it
                     simCards = controller.readSimCards()
-                    refreshLogs()
-                    return@launch
+                                return@launch
                 }
             }
         }
     }
 
-    fun clearNrfrSelections() {
+    fun clearSelections() {
         selectedCountryCode = ""
         customCountryCode = ""
         isCustomCountryCode = false
@@ -174,8 +149,6 @@ internal fun SimScreen(padding: PaddingValues) {
         persistUiState()
     }
 
-    LaunchedEffect(logs) { logScrollState.animateScrollTo(logScrollState.maxValue) }
-
     LaunchedEffect(Unit) {
         simCards = controller.readSimCards()
         if (selectedSubId !in simCards.map { it.subscriptionId }) {
@@ -183,8 +156,7 @@ internal fun SimScreen(padding: PaddingValues) {
             persistUiState()
         }
         controller.consumeOperationMessage()?.let { message = it }
-        if (controller.operationPending) message = "عملية SIM قيد التنفيذ؛ انتظر اكتمال Instrumentation عبر ADB المضمّن."
-        SimOperationLog.info(context, "فتح صفحة SIM؛ NRFR carrier-config API عبر Wireless ADB المدمج.")
+        if (controller.operationPending) message = "جاري تنفيذ العملية، يرجى الانتظار."
         refreshConnection()
     }
 
@@ -195,21 +167,13 @@ internal fun SimScreen(padding: PaddingValues) {
     ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text("إعداد CarrierConfig للشريحة", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
+                Text("إعدادات الشريحة", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
                 Text(
-                    "نفس ملفات وخيارات NRFR: رمز بلد ISO واسم المشغّل، باستخدام ICarrierConfigLoader عبر Wireless ADB المضمّن.",
+                    "اختر الدولة واسم المشغّل ثم طبّق الإعدادات بسهولة.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
-        item {
-            NoticeCard(
-                title = "حدود التغيير",
-                body = "هذا هو نفس مسار NRFR في CarrierConfig: يحفظ override بشكل persistent إلى أن تستخدم إعادة التعيين. يغيّر ISO البلد واسم المشغّل فقط؛ لا يغيّر IMSI أو ICCID أو MCC/MNC أو الشبكة الفعلية. التنفيذ عبر Wireless ADB المضمّن.",
-                color = KunPalette.WarningSoft,
-                textColor = KunPalette.Ink,
-            )
         }
         item {
             Card(
@@ -241,8 +205,7 @@ internal fun SimScreen(padding: PaddingValues) {
                                     .onFailure {
                                         message = "تعذر فتح خيارات المطوّر: ${it.message}"
                                         SimOperationLog.error(context, message.orEmpty())
-                                        refreshLogs()
-                                    }
+                                                                    }
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("فتح خيارات المطوّر") }
@@ -258,8 +221,7 @@ internal fun SimScreen(padding: PaddingValues) {
                                             message = if (success) "أُعيد الاتصال بنجاح." else "تعذرت إعادة الاتصال؛ تحقق من Wi‑Fi وWireless debugging."
                                             if (adbState == WirelessDebuggingManager.DebuggingState.READY && !controller.hasSimCache) queueSimRefresh()
                                             busy = false
-                                            refreshLogs()
-                                        }
+                                                                            }
                                     },
                                     enabled = !busy,
                                     modifier = Modifier.fillMaxWidth(),
@@ -286,8 +248,7 @@ internal fun SimScreen(padding: PaddingValues) {
                                             message = result.fold({ "اكتمل اقتران Wireless ADB." }, { "فشل الاقتران: ${it.message ?: it.javaClass.simpleName}" })
                                             if (result.isSuccess && !controller.hasSimCache) queueSimRefresh()
                                             busy = false
-                                            refreshLogs()
-                                        }
+                                                                            }
                                     },
                                     enabled = !busy && PairingCodeInput.normalize(pairingCode) != null,
                                     modifier = Modifier.fillMaxWidth(),
@@ -299,7 +260,7 @@ internal fun SimScreen(padding: PaddingValues) {
                             else -> Unit
                         }
                     } else {
-                        Text("الجهاز مقترن ومتصل. تبقى العملية متصلة بـADB حتى يعود تأكيد Android النهائي.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("الجهاز متصل وجاهز.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -356,7 +317,7 @@ internal fun SimScreen(padding: PaddingValues) {
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text("CarrierConfig الحالي — SIM ${sim.slot}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text("الإعداد الحالي — SIM ${sim.slot}", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                         if (sim.currentConfig.isEmpty()) {
                             Text("لا يوجد override ظاهر حالياً.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
@@ -491,24 +452,11 @@ internal fun SimScreen(padding: PaddingValues) {
                 }
             }
         }
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(containerColor = if (airplaneMode) KunPalette.SuccessSoft else MaterialTheme.colorScheme.surface),
-            ) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (airplaneMode) "وضع الطيران مفعّل" else "وضع الطيران غير مفعّل", fontWeight = FontWeight.Bold, color = if (airplaneMode) KunPalette.Success else KunPalette.Warning)
-                    Text("وضع الطيران غير مطلوب؛ أبقِ Wi‑Fi وWireless debugging فعالين.", style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = ::refreshConnection, enabled = !busy) { Text("تحديث حالة ADB") }
-                }
-            }
-        }
         if (controller.operationPending) {
             item {
                 NoticeCard(
-                    title = "جاري تنفيذ أمر النظام",
-                    body = "يعمل ICarrierConfigLoader داخل Instrumentation المضمّن عبر Wireless ADB. انتظر تأكيد Android النهائي.",
+                    title = "جاري التطبيق",
+                    body = "يتم تطبيق الإعدادات الآن. يرجى الانتظار.",
                     color = KunPalette.WarningSoft,
                     textColor = KunPalette.Ink,
                 )
@@ -523,19 +471,19 @@ internal fun SimScreen(padding: PaddingValues) {
                             busy = true
                             val result = withContext(Dispatchers.IO) { controller.resetCarrierConfig(sim) }
                             if (result.isSuccess) {
-                                clearNrfrSelections()
+                                clearSelections()
                                 message = "أُرسل طلب إعادة التعيين؛ سيظهر التأكيد بعد عودة التطبيق."
                             } else {
                                 message = "فشل بدء إعادة التعيين: ${result.exceptionOrNull()?.message}"
                             }
                             busy = false
-                            refreshLogs()
-                            if (result.isSuccess) waitForOperationResult()
+                                                if (result.isSuccess) waitForOperationResult()
                         }
                     },
                     enabled = selectedSim != null && connected && !busy && !controller.operationPending,
-                    modifier = Modifier.weight(1f).height(52.dp),
-                ) { Text("إعادة تعيين") }
+                    modifier = Modifier.weight(1f).height(54.dp),
+                    shape = RoundedCornerShape(16.dp),
+                ) { Text("مسح الإعدادات") }
                 Button(
                     onClick = {
                         val sim = selectedSim ?: return@Button
@@ -550,8 +498,7 @@ internal fun SimScreen(padding: PaddingValues) {
                             val result = withContext(Dispatchers.IO) { controller.saveCarrierConfig(sim, country, carrierName) }
                             message = if (result.isSuccess) "أُرسل طلب الحفظ؛ سيظهر التأكيد بعد عودة التطبيق." else "فشل بدء الحفظ: ${result.exceptionOrNull()?.message}"
                             busy = false
-                            refreshLogs()
-                            if (result.isSuccess) waitForOperationResult()
+                                                if (result.isSuccess) waitForOperationResult()
                         }
                     },
                     enabled = selectedSim != null && connected && !busy && !controller.operationPending && (
@@ -559,78 +506,17 @@ internal fun SimScreen(padding: PaddingValues) {
                             (!isCustomCountryCode && selectedCountryCode.isNotEmpty()) ||
                             (selectedCarrier != null && (!selectedCarrier.custom || customCarrierName.isNotEmpty()))
                         ),
-                    modifier = Modifier.weight(1f).height(52.dp),
+                    modifier = Modifier.weight(1f).height(54.dp),
                     shape = RoundedCornerShape(16.dp),
                 ) {
                     if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                    else Text("حفظ وتطبيق")
+                    else Text("تطبيق الإعدادات")
                 }
             }
         }
         message?.let { text -> item { InlineMessage(text) } }
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            ) {
-                Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("سجل عمليات SIM", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("${logs.size} سجل محفوظ محلياً", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = ::refreshLogs) { Text("تحديث") }
-                            TextButton(
-                                onClick = {
-                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                                    if (clipboard != null && logs.isNotEmpty()) {
-                                        clipboard.setPrimaryClip(ClipData.newPlainText("SIM operation log", simLogTranscript(logs)))
-                                        Toast.makeText(context, "تم نسخ السجل", Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                                enabled = logs.isNotEmpty(),
-                            ) { Text("نسخ") }
-                        }
-                    }
-                    if (logs.isEmpty()) {
-                        Text("ستظهر هنا حالة ADB وأمر النظام ونتيجة العملية أو سبب الخطأ.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        Column(
-                            Modifier.fillMaxWidth().height(320.dp)
-                                .background(Color(0xFF101510), RoundedCornerShape(14.dp))
-                                .verticalScroll(logScrollState).padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            logs.takeLast(80).forEach { entry ->
-                                val lineColor = when (entry.level) {
-                                    "ERR" -> Color(0xFFFF7777)
-                                    "CMD" -> Color(0xFF9BE9A8)
-                                    "OUT" -> Color(0xFFD6DED6)
-                                    else -> Color(0xFF8CC8FF)
-                                }
-                                val command = entry.message.removePrefix("$ ").replace("\\n", "\n").replace("\\r", "\r")
-                                val prompt = when (entry.level) {
-                                    "CMD" -> "adb$ $command"
-                                    "ERR" -> "ERROR  $command"
-                                    "OUT" -> command
-                                    else -> "INFO   $command"
-                                }
-                                Text("[${entry.timestamp}] $prompt", fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = lineColor, lineHeight = 16.sp)
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
-
 @Composable
 private fun NoticeCard(title: String, body: String, color: Color, textColor: Color) {
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = color)) {
@@ -655,9 +541,4 @@ private fun adbStateLabel(state: WirelessDebuggingManager.DebuggingState): Strin
     WirelessDebuggingManager.DebuggingState.NOT_PAIRED -> "غير مقترن"
     WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED -> "مقترن، لكن الاتصال غير نشط"
     WirelessDebuggingManager.DebuggingState.READY -> "متصل وجاهز"
-}
-
-private fun simLogTranscript(entries: List<SimLogEntry>): String = entries.joinToString("\n") { entry ->
-    val message = entry.message.replace("\\n", "\n").replace("\\r", "\r")
-    "[${entry.timestamp}] [${entry.level}] $message"
 }

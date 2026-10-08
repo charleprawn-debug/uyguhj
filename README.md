@@ -23,6 +23,7 @@ CORS_ORIGINS=https://your-allowed-web-origin.example
 RATE_LIMIT_WINDOW_MS=900000
 RATE_LIMIT_MAX_REQUESTS=100
 LOG_LEVEL=info
+ADMIN_EMAILS=owner@example.com
 ```
 
 Do not put `SUPABASE_SERVICE_ROLE_KEY`, JWT secrets, or `ENCRYPTION_KEY` into Android or GitHub source. The current verified Railway API URL is `https://uyguhj-production.up.railway.app`. Verify it with:
@@ -56,6 +57,10 @@ npm test
 npm run build
 npm run dev
 ```
+
+### Admin dashboard
+
+Open `/admin` on the deployed server to access the protected dashboard. Set `ADMIN_EMAILS` to a comma-separated allowlist before registering the owner account; only those accounts receive the `admin` role. The dashboard provides overview metrics, users, and plan creation.
 
 The minimum required values are `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, and `ENCRYPTION_KEY`. Generate secrets locally with:
 

@@ -7,6 +7,8 @@ function normalizeEmail(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
+const adminEmails = new Set((process.env.ADMIN_EMAILS ?? '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean));
+
 router.post('/register', async (req, res) => {
   const email = normalizeEmail(req.body?.email);
   const { password, fullName } = req.body ?? {};
@@ -28,7 +30,7 @@ router.post('/register', async (req, res) => {
 
   const profile = await supabaseAdmin
     .from('users')
-    .insert({ auth_id: created.data.user.id, email, full_name: fullName ?? null, is_email_verified: true })
+    .insert({ auth_id: created.data.user.id, email, full_name: fullName ?? null, is_email_verified: true, role: adminEmails.has(email) ? 'admin' : 'user' })
     .select('id,email,full_name,role')
     .single();
   if (profile.error) {
