@@ -111,6 +111,14 @@ class ProxyLocationController(private val context: Context) {
         return timezone
     }
 
+    internal fun fetchProxyLanguage(localPort: Int): ProxyLanguage {
+        val json = fetchProxyJsonThroughLocal(localPort, "مطابقة لغة الهاتف")
+        val country = json.optString("country_code", "")
+        val language = ProxyLanguageResolver.fromCountryCode(country)
+        AdvancedOperationLog.output(context, "GeoIP: البلد=$country، لغة الهاتف المقترحة=${language.localeTag}.")
+        return language
+    }
+
     private fun fetchProxyJsonThroughLocal(localPort: Int, purpose: String): JSONObject {
         require(localPort in 1..65535) { "منفذ sing-box المحلي غير صالح: $localPort." }
         waitForLoopbackListener(localPort)

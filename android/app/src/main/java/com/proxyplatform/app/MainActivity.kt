@@ -409,6 +409,12 @@ class MainActivity : ComponentActivity() {
                 .getBoolean("enabled", false)
         )
     }
+    var matchProxyLanguage by remember {
+        mutableStateOf(
+            context.getSharedPreferences("advanced_proxy_language_options", Context.MODE_PRIVATE)
+                .getBoolean("enabled", false)
+        )
+    }
     var wirelessState by remember {
         mutableStateOf(WirelessDebuggingManager.DebuggingState.NOT_PAIRED)
     }
@@ -606,9 +612,13 @@ class MainActivity : ComponentActivity() {
             }
         if (!ProxyLocalService.isRunning(context) &&
             (AdvancedSystemProxy.hasPendingRestore(context) ||
-                AdvancedProxyTimezoneController.hasPendingRestore(context))
+                AdvancedProxyTimezoneController.hasPendingRestore(context) ||
+                AdvancedProxyLanguageController.hasPendingRestore(context))
         ) {
-            AdvancedOperationLog.info(context, "اكتشاف جلسة متقدمة سابقة؛ محاولة استعادة المنطقة الزمنية والبروكسي.")
+            AdvancedOperationLog.info(context, "اكتشاف جلسة متقدمة سابقة؛ محاولة استعادة اللغة والمنطقة الزمنية والبروكسي.")
+            val languageRestore = withContext(Dispatchers.IO) {
+                AdvancedProxyLanguageController.restore(context)
+            }
             val timezoneRestore = withContext(Dispatchers.IO) {
                 AdvancedProxyTimezoneController.restore(context)
             }
@@ -618,9 +628,9 @@ class MainActivity : ComponentActivity() {
                     "127.0.0.1:${ProxyLocalService.localPort(context)}"
                 )
             }
-            if (timezoneRestore.isFailure || proxyRestore.isFailure) {
+            if (languageRestore.isFailure || timezoneRestore.isFailure || proxyRestore.isFailure) {
                 AdvancedOperationLog.error(context, "تعذرت استعادة الجلسة السابقة تلقائيًا؛ يلزم اتصال ADB.")
-                val failure = timezoneRestore.exceptionOrNull() ?: proxyRestore.exceptionOrNull()
+                val failure = languageRestore.exceptionOrNull() ?: timezoneRestore.exceptionOrNull() ?: proxyRestore.exceptionOrNull()
                 error = ProxyFailureMessages.advancedRestore(failure?.message)
             } else {
                 AdvancedOperationLog.info(context, "اكتملت معالجة استعادة الجلسة السابقة.")
@@ -741,20 +751,32 @@ class MainActivity : ComponentActivity() {
                     } else {
                         null
                     }
+                    val proxyLanguage = if (matchProxyLanguage) {
+                        runCatching {
+                            locationController.fetchProxyLanguage(ProxyLocalService.localPort(context))
+                        }.getOrElse {
+                            AdvancedOperationLog.exception(context, "فشل اكتشاف لغة الهاتف عبر مخرج sing-box المحلي", it)
+                            return@withContext Result.failure(it)
+                        }
+                    } else {
+                        null
+                    }
                     AdvancedOperationLog.info(context, "أصبح المنفذ المحلي جاهزًا؛ بدء ضبط بروكسي نظام Android.")
                     val proxyResult = AdvancedSystemProxy.apply(context, expectedProxy)
-                    val result = if (proxyResult.isFailure || proxyTimezone == null) {
+                    val result = if (proxyResult.isFailure) {
                         proxyResult
                     } else {
-                        AdvancedProxyTimezoneController.apply(context, proxyTimezone)
+                        val timezoneResult = if (proxyTimezone != null) AdvancedProxyTimezoneController.apply(context, proxyTimezone) else Result.success(Unit)
+                        if (timezoneResult.isFailure) timezoneResult else if (proxyLanguage != null) AdvancedProxyLanguageController.apply(context, proxyLanguage) else Result.success(Unit)
                     }
                     if (result.isSuccess &&
                         (!ProxyLocalService.isRunning(context) || !ProxyLocalService.isListenerReady(context))
                     ) {
                         AdvancedOperationLog.error(context, "توقفت الخدمة أو المنفذ أثناء تطبيق إعداد النظام.")
+                        val languageRestore = AdvancedProxyLanguageController.restore(context)
                         val timezoneRestore = AdvancedProxyTimezoneController.restore(context)
                         val proxyRestore = AdvancedSystemProxy.restore(context, expectedProxy)
-                        val failure = timezoneRestore.exceptionOrNull() ?: proxyRestore.exceptionOrNull()
+                        val failure = languageRestore.exceptionOrNull() ?: timezoneRestore.exceptionOrNull() ?: proxyRestore.exceptionOrNull()
                         Result.failure(
                             IllegalStateException(
                                 failure?.message ?: "توقفت خدمة البروكسي أثناء إعداد النظام."
@@ -776,11 +798,12 @@ class MainActivity : ComponentActivity() {
                     AdvancedOperationLog.exception(context, "فشل تشغيل الوضع المتقدم", it)
                 }
                 val restoreResult = withContext(Dispatchers.IO) {
+                    val languageRestore = AdvancedProxyLanguageController.restore(context)
                     val timezoneRestore = AdvancedProxyTimezoneController.restore(context)
                     val proxyRestore = if (AdvancedSystemProxy.hasPendingRestore(context)) {
                         AdvancedSystemProxy.restore(context, "127.0.0.1:${ProxyLocalService.localPort(context)}")
                     } else Result.success(Unit)
-                    if (timezoneRestore.isFailure) timezoneRestore else proxyRestore
+                    if (languageRestore.isFailure) languageRestore else if (timezoneRestore.isFailure) timezoneRestore else proxyRestore
                 }
                 if (restoreResult.isSuccess) {
                     AdvancedOperationLog.info(context, "اكتملت معالجة الاستعادة؛ إيقاف الخدمة المحلية.")
@@ -820,16 +843,15 @@ class MainActivity : ComponentActivity() {
         AdvancedOperationLog.info(context, "========== طلب إيقاف البروكسي المتقدم ==========")
         val expectedProxy = "127.0.0.1:${ProxyLocalService.localPort(context)}"
         coroutineScope.launch(Dispatchers.IO) {
+            val languageRestore = AdvancedProxyLanguageController.restore(context)
             val timezoneRestore = AdvancedProxyTimezoneController.restore(context)
-            val restoreResult = if (timezoneRestore.isSuccess) {
+            val restoreResult = if (languageRestore.isSuccess && timezoneRestore.isSuccess) {
                 AdvancedSystemProxy.restore(context, expectedProxy)
-            } else {
-                timezoneRestore
-            }
+            } else if (languageRestore.isFailure) languageRestore else timezoneRestore
             withContext(Dispatchers.Main) {
                 stopping = false
                 if (restoreResult.isSuccess) {
-                    AdvancedOperationLog.output(context, "استُعيدت المنطقة الزمنية والبروكسي؛ جارٍ إيقاف خدمة البروكسي المحلي.")
+                    AdvancedOperationLog.output(context, "استُعيدت لغة الهاتف والمنطقة الزمنية والبروكسي؛ جارٍ إيقاف خدمة البروكسي المحلي.")
                     locationController.stop()
                     if (mockLocation) mockLocationStatus = "تم إيقاف الموقع الوهمي."
                     ProxyLocalService.stop(context)
@@ -1246,7 +1268,25 @@ class MainActivity : ComponentActivity() {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        "هذا الخيار يغير المنطقة الزمنية فقط ولا يغير لغة الهاتف. تُرسل خدمة تحديد الموقع طلب GeoIP إلى ipwho.is عبر البروكسي المختار.",
+                        "تُرسل خدمة تحديد الموقع طلب GeoIP إلى ipwho.is عبر البروكسي المختار. عند تفعيل مطابقة اللغة سيغيّر التطبيق لغة الهاتف كاملة عبر ADB ويحفظها لاستعادتها عند الإيقاف.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        androidx.compose.material3.Checkbox(
+                            checked = matchProxyLanguage,
+                            onCheckedChange = { enabled ->
+                                matchProxyLanguage = enabled
+                                context.getSharedPreferences("advanced_proxy_language_options", Context.MODE_PRIVATE)
+                                    .edit().putBoolean("enabled", enabled).apply()
+                                error = null
+                            },
+                            enabled = !running && !starting && !checkingEndpoint && !stopping,
+                        )
+                        Text("تعديل لغة الهاتف بما يناسب البروكسي", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    }
+                    Text(
+                        "يحدد اللغة تلقائيًا من دولة خروج البروكسي، ويطبّقها على الهاتف والتطبيقات عبر Wireless ADB. يجب إبقاء اتصال ADB جاهزًا، وقد تعيد بعض التطبيقات إنشاء واجهتها.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
