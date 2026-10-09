@@ -23,6 +23,8 @@ import java.security.spec.PKCS8EncodedKeySpec
 import java.math.BigInteger
 import java.util.Date
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -59,32 +61,30 @@ class EmbeddedAdbManager private constructor(private val context: Context) {
         check(connection.isConnected()) { "ADB غير متصل" }
         val stream: AdbStream = connection.openStream("shell:$command")
         stream.use {
-            val output = ByteArrayOutputStream()
-            val buffer = ByteArray(4096)
-            var count: Int
-            try {
-                while (it.read(buffer, 0, buffer.size).also { count = it } >= 0) {
-                    if (count > 0) output.write(buffer, 0, count)
-                }
-            } catch (closed: java.io.IOException) {
-                // libadb 3.1.1 races the final remote CLSE packet: it can throw
-                // "Stream closed" after delivering the command's last data packet.
-                // Keep any received marker/output; the caller validates that the
-                // remote shell actually finished successfully before using it.
-                if (closed.message != "Stream closed.") throw closed
-                while (true) {
-                    val pendingBytes = try {
-                        stream.read(buffer, 0, buffer.size)
-                    } catch (terminalClose: java.io.IOException) {
-                        if (terminalClose.message == "Stream closed.") break
-                        throw terminalClose
+            val reader = Executors.newSingleThreadExecutor { task -> Thread(task, "adb-shell-reader").apply { isDaemon = true } }
+            val future = reader.submit<String> {
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(4096)
+                var count: Int
+                try {
+                    while (stream.read(buffer, 0, buffer.size).also { count = it } >= 0) {
+                        if (count > 0) output.write(buffer, 0, count)
                     }
-                    if (pendingBytes <= 0) break
-                    output.write(buffer, 0, pendingBytes)
+                } catch (closed: java.io.IOException) {
+                    if (closed.message != "Stream closed.") throw closed
+                    Log.w("EmbeddedAdbManager", "ADB remote shell stream closed after delivering ${output.size()} bytes.")
                 }
-                Log.w("EmbeddedAdbManager", "ADB remote shell stream closed after delivering ${output.size()} bytes.")
+                output.toString(Charsets.UTF_8.name())
             }
-            output.toString(Charsets.UTF_8.name())
+            try {
+                future.get(SHELL_COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            } catch (timeout: TimeoutException) {
+                future.cancel(true)
+                runCatching { stream.close() }
+                throw IllegalStateException("انتهت مهلة أمر ADB بعد ${SHELL_COMMAND_TIMEOUT_MS / 1000} ثانية: $command", timeout)
+            } finally {
+                reader.shutdownNow()
+            }
         }
     }
 
@@ -239,6 +239,7 @@ class EmbeddedAdbManager private constructor(private val context: Context) {
         }
 
         const val DEFAULT_TIMEOUT_MS = DISCOVERY_TIMEOUT_MS
+        private const val SHELL_COMMAND_TIMEOUT_MS = 15_000L
     }
 }
 
