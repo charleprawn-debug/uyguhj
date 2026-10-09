@@ -70,7 +70,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## Database
 
-Run `database/01_schema.sql`, the corrected `database/02_seed_data.sql`, then `database/03_wallet_plans.sql` and `database/04_user_feature_grants.sql` in the Supabase SQL editor. The last two migrations add wallet balances, transaction history, plan feature flags, atomic wallet purchases, and individual admin feature grants. Wallet top-up controls remain intentionally unavailable until payment methods are added. The schema uses Supabase Auth's `auth.users` table and requires Supabase rather than plain PostgreSQL.
+Run `database/01_schema.sql`, the corrected `database/02_seed_data.sql`, then `database/03_wallet_plans.sql`, `database/04_user_feature_grants.sql`, and `database/05_subscription_plans.sql` in the Supabase SQL editor. The migrations add wallet balances, transaction history, independent subscription packages, atomic wallet purchases, and individual admin feature grants. Subscription packages are separate from marketplace proxy products. Wallet top-up controls remain intentionally unavailable until payment methods are added. The schema uses Supabase Auth's `auth.users` table and requires Supabase rather than plain PostgreSQL.
 
 ## Current release boundary
 

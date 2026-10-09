@@ -50,7 +50,7 @@ router.post('/users/:id/grant-plan', async (req, res) => {
   const planId = String(req.body?.planId ?? '');
   if (!planId) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'planId is required' } });
   const days = Math.min(Math.max(Number(req.body?.days ?? 30), 1), 3650);
-  const { data, error } = await supabaseAdmin.from('subscriptions').insert({ user_id: req.params.id, product_id: planId, status: 'active', duration_type: 'monthly', started_at: new Date().toISOString(), expires_at: new Date(Date.now() + days * 86400000).toISOString(), auto_renew: false, will_renew: false }).select('*').single();
+  const { data, error } = await supabaseAdmin.from('subscriptions').insert({ user_id: req.params.id, product_id: null, subscription_plan_id: planId, status: 'active', duration_type: 'custom', started_at: new Date().toISOString(), expires_at: new Date(Date.now() + days * 86400000).toISOString(), auto_renew: false, will_renew: false }).select('*').single();
   if (error) return res.status(400).json({ error: { code: 'PLAN_GRANT_FAILED', message: error.message } });
   return res.status(201).json({ data });
 });
@@ -67,6 +67,31 @@ router.get('/plans', async (_req, res) => {
   const { data, error } = await supabaseAdmin.from('proxy_products').select('id,name,description,protocol,country_code,country_name,city,price_daily,price_weekly,price_monthly,price_quarterly,price_yearly,device_limit,traffic_limit_gb,is_active,is_featured,stock_available,category,tags,feature_flags,created_at,updated_at').order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: { code: 'PLANS_UNAVAILABLE', message: 'Could not load plans' } });
   return res.json({ data: data ?? [] });
+});
+
+router.get('/subscription-plans', async (_req, res) => {
+  const { data, error } = await supabaseAdmin.from('subscription_plans').select('id,name,description,price,currency,duration_days,is_active,is_featured,sort_order,feature_flags,created_at,updated_at').order('sort_order', { ascending: true }).order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: { code: 'SUBSCRIPTION_PLANS_UNAVAILABLE', message: 'Could not load subscription plans' } });
+  return res.json({ data: data ?? [] });
+});
+
+router.post('/subscription-plans', async (req, res) => {
+  const body = req.body ?? {};
+  if (typeof body.name !== 'string' || !body.name.trim()) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Subscription plan name is required' } });
+  const flags = Object.fromEntries(featureKeys.map((key) => [key, body.featureFlags?.[key] === true]));
+  const payload = { name: body.name.trim(), description: typeof body.description === 'string' ? body.description.trim() : '', price: Math.max(0, Number(body.price || 0)), currency: body.currency || 'USD', duration_days: Math.max(1, Number(body.durationDays || 30)), feature_flags: flags, is_active: body.isActive !== false, is_featured: body.isFeatured === true, sort_order: Number(body.sortOrder || 0) };
+  const { data, error } = await supabaseAdmin.from('subscription_plans').insert(payload).select('*').single();
+  if (error) return res.status(400).json({ error: { code: 'SUBSCRIPTION_PLAN_CREATE_FAILED', message: error.message } });
+  return res.status(201).json({ data });
+});
+
+router.patch('/subscription-plans/:id', async (req, res) => {
+  const allowed = ['name', 'description', 'price', 'currency', 'duration_days', 'feature_flags', 'is_active', 'is_featured', 'sort_order'];
+  const patch = Object.fromEntries(Object.entries(req.body ?? {}).filter(([key]) => allowed.includes(key)));
+  if (!Object.keys(patch).length) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'No editable fields supplied' } });
+  const { data, error } = await supabaseAdmin.from('subscription_plans').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', req.params.id).select('*').single();
+  if (error) return res.status(400).json({ error: { code: 'SUBSCRIPTION_PLAN_UPDATE_FAILED', message: error.message } });
+  return res.json({ data });
 });
 
 router.post('/plans', async (req, res) => {

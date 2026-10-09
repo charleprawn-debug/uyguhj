@@ -248,6 +248,7 @@ internal fun MainShell(vm: AppViewModel) {
             Screen.SUBSCRIPTIONS -> vm.loadSubscriptions()
             Screen.PROXY -> Unit
             Screen.SIM -> Unit
+            Screen.WALLET -> vm.loadPlansAndWallet()
         }
     }
 
@@ -257,6 +258,7 @@ internal fun MainShell(vm: AppViewModel) {
         Screen.PROXY -> "اتصال البروكسي"
         Screen.SIM -> "SIM"
         Screen.PROFILE -> "حسابي"
+        Screen.WALLET -> "المحفظة"
     }
     val sectionDescription = when (screen) {
         Screen.MARKET -> "تصفّح المنتجات المتاحة"
@@ -264,6 +266,7 @@ internal fun MainShell(vm: AppViewModel) {
         Screen.PROXY -> "إعداد اتصالك والتحكم فيه"
         Screen.SIM -> "اختبار خصائص المشغّل عبر ADB"
         Screen.PROFILE -> "بيانات الحساب والتحقق"
+        Screen.WALLET -> "الرصيد وسجل العمليات"
     }
 
     Scaffold(
@@ -320,7 +323,8 @@ internal fun MainShell(vm: AppViewModel) {
                 Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding) { screen = Screen.MARKET }
                 Screen.PROXY -> FeatureGate(vm.access.vpn || vm.access.advanced, "لا يوجد اشتراك اتصال نشط") { ProxyScreen(padding) }
                 Screen.SIM -> FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") { SimScreen(padding) }
-                Screen.PROFILE -> ProfileScreen(vm, padding) { screen = Screen.SUBSCRIPTIONS }
+                Screen.PROFILE -> ProfileScreen(vm, padding, onWallet = { screen = Screen.WALLET }, onPlans = { screen = Screen.SUBSCRIPTIONS })
+                Screen.WALLET -> WalletScreen(vm, padding)
             }
         }
     }
@@ -519,8 +523,12 @@ internal fun Subscriptions(vm: AppViewModel, padding: PaddingValues, onMarket: (
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
-            PageHeading("حسابك", "اشتراكاتي", "تابع حالة خطط البروكسي المرتبطة بحسابك.")
+            PageHeading("حسابك", "باقات الاشتراك", "اختر الباقة المناسبة وفعّلها من رصيد محفظتك.")
         }
+        if (vm.plansLoading && vm.plans.isEmpty()) item { StateCard("جارٍ تحميل الباقات", "نسترجع الباقات المتاحة.", loading = true) }
+        if (vm.plansError != null && vm.plans.isEmpty()) item { StateCard("تعذّر تحميل الباقات", vm.plansError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadPlansAndWallet() }) }
+        items(vm.plans, key = { it.id }) { plan -> PlanCard(plan, vm) }
+        if (vm.subscriptions.isNotEmpty()) item { Text("اشتراكاتي النشطة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
         when {
             vm.subscriptionsLoading && vm.subscriptions.isEmpty() -> item {
                 StateCard("جارٍ تحميل الاشتراكات", "نسترجع بيانات حسابك من الخدمة.", loading = true)
@@ -528,9 +536,7 @@ internal fun Subscriptions(vm: AppViewModel, padding: PaddingValues, onMarket: (
             vm.subscriptionsError != null && vm.subscriptions.isEmpty() -> item {
                 StateCard("تعذّر تحميل الاشتراكات", vm.subscriptionsError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadSubscriptions() })
             }
-            vm.subscriptions.isEmpty() -> item {
-                StateCard("ما عندك اشتراكات بعد", "ستظهر هنا الاشتراكات الفعلية المرتبطة بحسابك عندما تتوفر.", actionLabel = "استكشاف السوق", onAction = onMarket)
-            }
+            vm.subscriptions.isEmpty() -> Unit
             else -> {
                 if (vm.subscriptionsError != null) item {
                     StateCard("تعذّر تحديث القائمة", "نعرض آخر بيانات الاشتراكات التي تم تحميلها.", error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadSubscriptions() })
@@ -567,7 +573,7 @@ private fun SubscriptionCard(subscription: Subscription) {
 }
 
 @Composable
-internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues, onPlans: () -> Unit) {
+internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues, onWallet: () -> Unit, onPlans: () -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),
@@ -619,14 +625,10 @@ internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues, onPlans: ()
                 StateCard("تعذّر تحديث بيانات الحساب", "نعرض آخر بيانات نجح تحميلها.", error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadProfile() })
             }
         }
-        item { WalletCard(vm) }
         item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onPlans, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("الاشتراكات") }
-            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("شحن الرصيد لاحقًا") }
+            Button(onClick = onWallet, modifier = Modifier.weight(1f).height(56.dp), shape = RoundedCornerShape(16.dp)) { Text("المحفظة", fontWeight = FontWeight.Bold) }
+            Button(onClick = onPlans, modifier = Modifier.weight(1f).height(56.dp), shape = RoundedCornerShape(16.dp)) { Text("الاشتراك", fontWeight = FontWeight.Bold) }
         } }
-        if (vm.plansError != null) item { StateCard("تعذر تحديث الخطط", vm.plansError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadPlansAndWallet() }) }
-        if (vm.plans.isNotEmpty()) item { Text("الخطط المتاحة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-        items(vm.plans, key = { it.id }) { plan -> PlanCard(plan, vm) }
         item {
             OutlinedButton(
                 onClick = { vm.logout() },
@@ -648,6 +650,17 @@ private fun WalletCard(vm: AppViewModel) {
         OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("شحن الرصيد — قريبًا") }
         if (vm.walletTransactions.isNotEmpty()) { Text("آخر العمليات", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); vm.walletTransactions.take(3).forEach { tx -> KeyValueRow(tx.description, "${if (tx.amount >= 0) "+" else ""}%.2f".format(Locale.US, tx.amount)) } }
     } }
+}
+
+@Composable
+private fun WalletScreen(vm: AppViewModel, padding: PaddingValues) {
+    LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        item { PageHeading("حسابك", "المحفظة", "إدارة رصيدك ومراجعة جميع العمليات المالية.") }
+        item { WalletCard(vm) }
+        item { Text("سجل العمليات", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+        if (vm.walletTransactions.isEmpty()) item { StateCard("لا توجد عمليات بعد", "ستظهر هنا عمليات الخصم والإضافة عند توفرها.") }
+        items(vm.walletTransactions) { tx -> KUNCard { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(tx.description, fontWeight = FontWeight.Bold); Text(readableDate(tx.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Text("${if (tx.amount >= 0) "+" else ""}%.2f".format(Locale.US, tx.amount), fontWeight = FontWeight.ExtraBold, color = if (tx.amount >= 0) KunPalette.Success else KunPalette.Error) } } }
+    }
 }
 
 @Composable

@@ -12,14 +12,14 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/subscriptions', async (req, res) => {
-  const { data, error } = await supabaseAdmin.from('subscriptions').select('*,proxy_products(id,name,description,protocol,country_code,country_name,price_monthly,feature_flags)').eq('user_id', req.user!.id).order('created_at', { ascending: false });
+  const { data, error } = await supabaseAdmin.from('subscriptions').select('*,proxy_products(id,name,description,protocol,country_code,country_name,price_monthly,feature_flags),subscription_plans(id,name,description,price,currency,duration_days,feature_flags)').eq('user_id', req.user!.id).order('created_at', { ascending: false });
   if (error) return res.status(500).json({ error: { code: 'SUBSCRIPTIONS_UNAVAILABLE', message: 'Could not load subscriptions' } });
   return res.json({ data: data ?? [] });
 });
 
-router.get('/plans', async (_req, res) => {
-  const { data, error } = await supabaseAdmin.from('proxy_products').select('id,name,description,protocol,country_code,country_name,price_daily,price_weekly,price_monthly,price_quarterly,price_yearly,device_limit,traffic_limit_gb,is_active,is_featured,category,tags,feature_flags').eq('is_active', true).order('is_featured', { ascending: false }).order('created_at', { ascending: false });
-  if (error) return res.status(500).json({ error: { code: 'PLANS_UNAVAILABLE', message: 'Could not load plans' } });
+router.get('/subscription-plans', async (_req, res) => {
+  const { data, error } = await supabaseAdmin.from('subscription_plans').select('id,name,description,price,currency,duration_days,is_active,is_featured,feature_flags').eq('is_active', true).order('is_featured', { ascending: false }).order('sort_order', { ascending: true });
+  if (error) return res.status(500).json({ error: { code: 'SUBSCRIPTION_PLANS_UNAVAILABLE', message: 'Could not load subscription plans' } });
   return res.json({ data: data ?? [] });
 });
 
@@ -38,17 +38,17 @@ router.get('/wallet/transactions', async (req, res) => {
 router.post('/wallet/top-up', async (_req, res) => res.status(409).json({ error: { code: 'TOP_UP_NOT_AVAILABLE', message: 'Wallet top-up methods are not available yet' } }));
 
 router.get('/access', async (req, res) => {
-  const { data, error } = await supabaseAdmin.from('subscriptions').select('status,expires_at,proxy_products(feature_flags)').eq('user_id', req.user!.id).eq('status', 'active').gt('expires_at', new Date().toISOString());
+  const { data, error } = await supabaseAdmin.from('subscriptions').select('status,expires_at,proxy_products(feature_flags),subscription_plans(feature_flags)').eq('user_id', req.user!.id).eq('status', 'active').gt('expires_at', new Date().toISOString());
   if (error) return res.status(500).json({ error: { code: 'ACCESS_UNAVAILABLE', message: 'Could not load feature access' } });
   const access = { advanced: false, sim: false, vpn: false, mock_location: false };
-  for (const row of data ?? []) for (const [key, value] of Object.entries((row.proxy_products as { feature_flags?: Record<string, boolean> } | null)?.feature_flags ?? {})) if (key in access && value === true) access[key as keyof typeof access] = true;
+  for (const row of data ?? []) for (const flags of [row.proxy_products, row.subscription_plans]) for (const [key, value] of Object.entries((flags as { feature_flags?: Record<string, boolean> } | null)?.feature_flags ?? {})) if (key in access && value === true) access[key as keyof typeof access] = true;
   const { data: grants } = await supabaseAdmin.from('user_feature_grants').select('feature_key,enabled,expires_at').eq('user_id', req.user!.id).eq('enabled', true);
   for (const grant of grants ?? []) if ((!grant.expires_at || new Date(grant.expires_at) > new Date()) && grant.feature_key in access) access[grant.feature_key as keyof typeof access] = true;
   return res.json({ data: access });
 });
 
-router.post('/plans/:id/activate', async (req, res) => {
-  const { data, error } = await supabaseAdmin.rpc('purchase_plan', { p_user_id: req.user!.id, p_product_id: req.params.id });
+router.post('/subscription-plans/:id/activate', async (req, res) => {
+  const { data, error } = await supabaseAdmin.rpc('purchase_subscription_plan', { p_user_id: req.user!.id, p_plan_id: req.params.id });
   if (error) return res.status(500).json({ error: { code: 'PLAN_PURCHASE_FAILED', message: error.message } });
   const result = Array.isArray(data) ? data[0] : data;
   if (!result?.success) return res.status(409).json({ error: { code: 'PLAN_PURCHASE_REJECTED', message: result?.message ?? 'Could not activate plan' }, data: result });
