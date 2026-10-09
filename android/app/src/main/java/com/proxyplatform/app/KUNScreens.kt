@@ -238,12 +238,13 @@ internal fun MainShell(vm: AppViewModel) {
         return
     }
 
+    LaunchedEffect(Unit) { vm.loadPlansAndWallet() }
     LaunchedEffect(screen) {
         AdvancedOperationLog.info(context, "App navigation: ${screen.name}.")
         vm.clearError()
         when (screen) {
             Screen.MARKET -> vm.loadProducts()
-            Screen.PROFILE -> vm.loadProfile()
+            Screen.PROFILE -> { vm.loadProfile(); vm.loadPlansAndWallet() }
             Screen.SUBSCRIPTIONS -> vm.loadSubscriptions()
             Screen.PROXY -> Unit
             Screen.SIM -> Unit
@@ -317,9 +318,9 @@ internal fun MainShell(vm: AppViewModel) {
             when (destination) {
                 Screen.MARKET -> Marketplace(vm, padding) { selectedProduct = it }
                 Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding) { screen = Screen.MARKET }
-                Screen.PROXY -> ProxyScreen(padding)
-                Screen.SIM -> SimScreen(padding)
-                Screen.PROFILE -> ProfileScreen(vm, padding)
+                Screen.PROXY -> FeatureGate(vm.access.vpn || vm.access.advanced, "لا يوجد اشتراك اتصال نشط") { ProxyScreen(padding) }
+                Screen.SIM -> FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") { SimScreen(padding) }
+                Screen.PROFILE -> ProfileScreen(vm, padding) { screen = Screen.SUBSCRIPTIONS }
             }
         }
     }
@@ -566,7 +567,7 @@ private fun SubscriptionCard(subscription: Subscription) {
 }
 
 @Composable
-internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues) {
+internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues, onPlans: () -> Unit) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),
@@ -618,6 +619,14 @@ internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues) {
                 StateCard("تعذّر تحديث بيانات الحساب", "نعرض آخر بيانات نجح تحميلها.", error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadProfile() })
             }
         }
+        item { WalletCard(vm) }
+        item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = onPlans, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("الاشتراكات") }
+            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("شحن الرصيد لاحقًا") }
+        } }
+        if (vm.plansError != null) item { StateCard("تعذر تحديث الخطط", vm.plansError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadPlansAndWallet() }) }
+        if (vm.plans.isNotEmpty()) item { Text("الخطط المتاحة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+        items(vm.plans, key = { it.id }) { plan -> PlanCard(plan, vm) }
         item {
             OutlinedButton(
                 onClick = { vm.logout() },
@@ -627,6 +636,36 @@ internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues) {
             ) { Text("تسجيل الخروج", fontWeight = FontWeight.Bold) }
         }
     }
+}
+
+@Composable
+private fun WalletCard(vm: AppViewModel) {
+    KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Column { Text("المحفظة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("الرصيد المتاح", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            Text(vm.wallet?.let { "%.2f ${it.currency}".format(Locale.US, it.balance) } ?: "—", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = KunPalette.Primary)
+        }
+        OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("شحن الرصيد — قريبًا") }
+        if (vm.walletTransactions.isNotEmpty()) { Text("آخر العمليات", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); vm.walletTransactions.take(3).forEach { tx -> KeyValueRow(tx.description, "${if (tx.amount >= 0) "+" else ""}%.2f".format(Locale.US, tx.amount)) } }
+    } }
+}
+
+@Composable
+private fun PlanCard(plan: Plan, vm: AppViewModel) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), border = BorderStroke(if (plan.featured) 2.dp else 1.dp, if (plan.featured) KunPalette.Primary else KunPalette.Border), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) { Column(Modifier.weight(1f)) { Text(plan.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text(plan.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; if (plan.featured) FeaturePill("مميز", color = KunPalette.Primary, container = MaterialTheme.colorScheme.primaryContainer) }
+            Text(plan.monthly.ifBlank { "السعر غير محدد" }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = KunPalette.Primary)
+            Text("المدة: ${plan.duration}", style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { val labels = mapOf("advanced" to "الوضع المتقدم", "sim" to "SIM", "vpn" to "VPN", "mock_location" to "محاكاة الموقع"); plan.features.forEach { labels[it]?.let { label -> FeaturePill(label, color = KunPalette.Success, container = KunPalette.SuccessSoft) } } }
+            Button(onClick = { vm.activatePlan(plan) }, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(15.dp)) { Text("تفعيل من رصيد المحفظة", fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+private fun FeatureGate(allowed: Boolean, message: String, content: @Composable () -> Unit) {
+    if (allowed) content() else LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item { StateCard("الميزة تحتاج اشتراكًا", message, actionLabel = "عرض الخطط", onAction = {}) } }
 }
 
 private fun statusLabel(status: String): String = when (status.lowercase(Locale.ROOT)) {

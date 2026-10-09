@@ -110,6 +110,10 @@ internal data class Product(
 )
 internal data class Profile(val email: String, val name: String, val role: String, val verified: Boolean)
 internal data class Subscription(val status: String, val expires: String, val product: String, val protocol: String)
+internal data class Plan(val id: String, val name: String, val description: String, val monthly: String, val duration: String, val features: Set<String>, val featured: Boolean)
+internal data class Wallet(val balance: Double, val currency: String)
+internal data class WalletTransaction(val amount: Double, val description: String, val type: String, val createdAt: String)
+internal data class FeatureAccess(val advanced: Boolean = false, val sim: Boolean = false, val vpn: Boolean = false, val mockLocation: Boolean = false)
 internal enum class Screen { MARKET, SUBSCRIPTIONS, PROXY, SIM, PROFILE }
 
 private val SuccessGreen = KunPalette.Success
@@ -185,6 +189,11 @@ internal class ApiClient(context: Context) {
     }
     fun profile(): Profile { val x = request("/me").getJSONObject("data"); return Profile(x.optString("email"), x.optString("full_name", "بدون اسم"), x.optString("role", "user"), x.optBoolean("is_email_verified")) }
     fun subscriptions(): List<Subscription> { val a = request("/me/subscriptions").getJSONArray("data"); return (0 until a.length()).map { val x = a.getJSONObject(it); val p = x.optJSONObject("proxy_products"); Subscription(x.optString("status"), x.optString("expires_at"), p?.optString("name", "البروكسي") ?: "البروكسي", p?.optString("protocol", "") ?: "") } }
+    fun plans(): List<Plan> { val a = request("/me/plans").getJSONArray("data"); return (0 until a.length()).map { val x = a.getJSONObject(it); val flags = x.optJSONObject("feature_flags"); val features = listOf("advanced", "sim", "vpn", "mock_location").filter { flags?.optBoolean(it, false) == true }.toSet(); Plan(x.getString("id"), x.optString("name"), x.optString("description"), formatProductPrice(x.optDouble("price_monthly", Double.NaN), "شهر"), "شهري", features, x.optBoolean("is_featured")) } }
+    fun wallet(): Wallet { val x = request("/me/wallet").getJSONObject("data"); return Wallet(x.optDouble("balance", 0.0), x.optString("currency", "USD")) }
+    fun walletTransactions(): List<WalletTransaction> { val a = request("/me/wallet/transactions").getJSONArray("data"); return (0 until a.length()).map { val x = a.getJSONObject(it); WalletTransaction(x.optDouble("amount", 0.0), x.optString("description"), x.optString("transaction_type"), x.optString("created_at")) } }
+    fun featureAccess(): FeatureAccess { val x = request("/me/access").getJSONObject("data"); return FeatureAccess(x.optBoolean("advanced"), x.optBoolean("sim"), x.optBoolean("vpn"), x.optBoolean("mock_location")) }
+    fun activatePlan(id: String) { request("/me/plans/$id/activate", "POST", JSONObject()) }
     fun loggedIn() = store.accessToken != null
     fun logout() = store.clear()
 }
@@ -205,6 +214,12 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     var subscriptions by mutableStateOf<List<Subscription>>(emptyList()); private set
     var subscriptionsLoading by mutableStateOf(false); private set
     var subscriptionsError by mutableStateOf<String?>(null); private set
+    var plans by mutableStateOf<List<Plan>>(emptyList()); private set
+    var plansLoading by mutableStateOf(false); private set
+    var plansError by mutableStateOf<String?>(null); private set
+    var wallet by mutableStateOf<Wallet?>(null); private set
+    var walletTransactions by mutableStateOf<List<WalletTransaction>>(emptyList()); private set
+    var access by mutableStateOf(FeatureAccess()); private set
 
     fun login(email: String, password: String) {
         loading = true
@@ -291,6 +306,20 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
+    fun loadPlansAndWallet() = viewModelScope.launch {
+        plansLoading = true; plansError = null
+        try {
+            val result = withContext(Dispatchers.IO) { Triple(api.plans(), api.wallet(), api.walletTransactions()) }
+            plans = result.first; wallet = result.second; walletTransactions = result.third
+            access = withContext(Dispatchers.IO) { api.featureAccess() }
+        } catch (failure: Exception) { plansError = failure.message ?: "تعذر تحميل الخطط والمحفظة." } finally { plansLoading = false }
+    }
+
+    fun activatePlan(plan: Plan) = viewModelScope.launch {
+        try { withContext(Dispatchers.IO) { api.activatePlan(plan.id) }; loadPlansAndWallet(); loadSubscriptions() }
+        catch (failure: Exception) { plansError = failure.message ?: "تعذر تفعيل الخطة. تحقق من رصيد المحفظة." }
+    }
+
     fun logout() {
         api.logout()
         loggedIn = false
@@ -300,6 +329,7 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
         profileError = null
         subscriptions = emptyList()
         subscriptionsError = null
+        plans = emptyList(); wallet = null; walletTransactions = emptyList(); access = FeatureAccess(); plansError = null
         error = null
     }
 
