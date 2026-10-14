@@ -94,6 +94,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.util.UUID
 
 internal data class Product(
     val id: String,
@@ -108,6 +109,10 @@ internal data class Product(
     val monthly: String,
     val featured: Boolean,
 )
+internal data class ProxyPurchasePlan(val id: Int, val name: String, val durationHours: Int, val price: Double)
+internal data class ProxyPurchaseLocation(val id: Int, val label: String)
+internal data class ProxyPurchaseOptions(val protocol: String, val plans: List<ProxyPurchasePlan>, val locations: List<ProxyPurchaseLocation>)
+internal data class PurchasedProxy(val protocol: String, val host: String, val port: Int, val username: String, val password: String, val url: String, val expiresAt: String)
 internal data class Profile(val email: String, val name: String, val role: String, val verified: Boolean)
 internal data class Subscription(val status: String, val expires: String, val product: String, val protocol: String)
 internal data class Plan(val id: String, val name: String, val description: String, val monthly: String, val duration: String, val features: Set<String>, val featured: Boolean)
@@ -187,6 +192,16 @@ internal class ApiClient(context: Context) {
             )
         }
     }
+    fun proxyPurchaseOptions(productId: String): ProxyPurchaseOptions {
+        val x = request("/products/$productId/purchase-options").getJSONObject("data")
+        val plans = x.getJSONArray("plans").let { a -> (0 until a.length()).map { i -> val p = a.getJSONObject(i); val name = p.optJSONObject("name")?.optString("ar").orEmpty().ifBlank { p.optJSONObject("name")?.optString("en") ?: "خطة" }; ProxyPurchasePlan(p.getInt("id"), name, p.optInt("duration_hours"), p.optDouble("price")) } }
+        val locations = x.getJSONArray("locations").let { a -> (0 until a.length()).map { i -> val l = a.getJSONObject(i); val country = l.optJSONObject("country")?.optString("name").orEmpty(); ProxyPurchaseLocation(l.getInt("id"), listOf(country, l.optString("state"), l.optString("isp")).filter { it.isNotBlank() }.joinToString(" • ")) } }
+        return ProxyPurchaseOptions(x.optString("protocol", "socks5"), plans, locations)
+    }
+    fun purchaseProxy(productId: String, options: ProxyPurchaseOptions, planId: Int, locationId: Int, username: String, password: String): PurchasedProxy {
+        val x = request("/products/$productId/purchase-proxy", "POST", JSONObject().put("clientRequestId", UUID.randomUUID().toString()).put("planId", planId).put("locationId", locationId).put("protocol", options.protocol).put("username", username).put("password", password)).getJSONObject("data").getJSONObject("proxy")
+        return PurchasedProxy(x.optString("protocol", options.protocol), x.getString("host"), x.getInt("port"), x.optString("username", username), x.optString("password", password), x.optString("url"), x.optString("expires_at"))
+    }
     fun profile(): Profile { val x = request("/me").getJSONObject("data"); return Profile(x.optString("email"), x.optString("full_name", "بدون اسم"), x.optString("role", "user"), x.optBoolean("is_email_verified")) }
     fun subscriptions(): List<Subscription> { val a = request("/me/subscriptions").getJSONArray("data"); return (0 until a.length()).map { val x = a.getJSONObject(it); val p = x.optJSONObject("subscription_plans") ?: x.optJSONObject("proxy_products"); Subscription(x.optString("status"), x.optString("expires_at"), p?.optString("name", "الاشتراك") ?: "الاشتراك", p?.optString("protocol", "اشتراك") ?: "اشتراك") } }
     fun plans(): List<Plan> { val a = request("/me/subscription-plans").getJSONArray("data"); return (0 until a.length()).map { val x = a.getJSONObject(it); val flags = x.optJSONObject("feature_flags"); val features = listOf("advanced", "sim", "vpn", "mock_location").filter { flags?.optBoolean(it, false) == true }.toSet(); Plan(x.getString("id"), x.optString("name"), x.optString("description"), formatProductPrice(x.optDouble("price", Double.NaN), x.optInt("duration_days", 30).toString() + " يوم"), x.optInt("duration_days", 30).toString() + " يوم", features, x.optBoolean("is_featured")) } }
@@ -206,6 +221,10 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     var products by mutableStateOf<List<Product>>(emptyList()); private set
     var productsLoading by mutableStateOf(false); private set
     var productsError by mutableStateOf<String?>(null); private set
+    var purchaseOptions by mutableStateOf<ProxyPurchaseOptions?>(null); private set
+    var purchaseLoading by mutableStateOf(false); private set
+    var purchaseError by mutableStateOf<String?>(null); private set
+    var purchasedProxy by mutableStateOf<PurchasedProxy?>(null); private set
 
     var profile by mutableStateOf<Profile?>(null); private set
     var profileLoading by mutableStateOf(false); private set
@@ -279,6 +298,24 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
             productsLoading = false
         }
     }
+
+    fun beginProxyPurchase(product: Product) = viewModelScope.launch {
+        purchaseLoading = true; purchaseError = null; purchaseOptions = null; purchasedProxy = null
+        try { purchaseOptions = withContext(Dispatchers.IO) { api.proxyPurchaseOptions(product.id) } }
+        catch (failure: Exception) { purchaseError = failure.message ?: "تعذر تحميل مدد الشراء." }
+        finally { purchaseLoading = false }
+    }
+
+    fun confirmProxyPurchase(product: Product, options: ProxyPurchaseOptions, plan: ProxyPurchasePlan, location: ProxyPurchaseLocation, username: String, password: String, onSuccess: (PurchasedProxy) -> Unit) = viewModelScope.launch {
+        purchaseLoading = true; purchaseError = null
+        try {
+            val result = withContext(Dispatchers.IO) { api.purchaseProxy(product.id, options, plan.id, location.id, username, password) }
+            purchasedProxy = result; purchaseOptions = null; onSuccess(result)
+        } catch (failure: Exception) { purchaseError = failure.message ?: "تعذر إتمام شراء البروكسي." }
+        finally { purchaseLoading = false }
+    }
+
+    fun closePurchase() { purchaseOptions = null; purchaseError = null; purchasedProxy = null }
 
     fun loadProfile() = viewModelScope.launch {
         if (profileLoading) return@launch

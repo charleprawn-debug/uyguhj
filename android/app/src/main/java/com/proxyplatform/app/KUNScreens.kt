@@ -69,6 +69,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 
 @Composable
 internal fun AuthScreen(vm: AppViewModel) {
@@ -234,7 +235,10 @@ internal fun MainShell(vm: AppViewModel) {
     var selectedProduct by remember { mutableStateOf<Product?>(null) }
 
     if (selectedProduct != null) {
-        ProductDetails(selectedProduct!!, onBack = { selectedProduct = null })
+        ProductDetails(selectedProduct!!, vm, onBack = { selectedProduct = null }, onPurchased = { purchased ->
+            ProxyProfileStore(context.applicationContext).save(SavedProxy(UUID.randomUUID().toString(), selectedProduct!!.name, purchased.protocol, purchased.host, purchased.port, true, purchased.username, purchased.password))
+            selectedProduct = null
+        })
         return
     }
 
@@ -450,7 +454,11 @@ private fun ProductCard(product: Product, onClick: (Product) -> Unit) {
 }
 
 @Composable
-internal fun ProductDetails(product: Product, onBack: () -> Unit) {
+internal fun ProductDetails(product: Product, vm: AppViewModel, onBack: () -> Unit, onPurchased: (PurchasedProxy) -> Unit) {
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var selectedPlan by remember { mutableStateOf<ProxyPurchasePlan?>(null) }
+    var selectedLocation by remember { mutableStateOf<ProxyPurchaseLocation?>(null) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -499,16 +507,38 @@ internal fun ProductDetails(product: Product, onBack: () -> Unit) {
                 }
             }
             item {
-                Card(colors = CardDefaults.cardColors(containerColor = KunPalette.WarningSoft), shape = RoundedCornerShape(20.dp)) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("الشراء غير متاح حاليًا", color = KunPalette.Warning, fontWeight = FontWeight.Bold)
-                        Text("نعرض تفاصيل المنتجات المتاحة من الخدمة فقط. لا يوجد إجراء شراء مفعّل في هذه النسخة.", color = KunPalette.Ink, style = MaterialTheme.typography.bodySmall)
-                    }
+                Button(onClick = { vm.beginProxyPurchase(product) }, enabled = !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
+                    if (vm.purchaseLoading && vm.purchaseOptions == null) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("شراء بروكسي", fontWeight = FontWeight.Bold)
                 }
             }
-            item {
-                Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(disabledContainerColor = KunPalette.Border, disabledContentColor = KunPalette.Muted)) {
-                    Text("الشراء غير متاح حاليًا")
+            if (vm.purchaseError != null) item { StateCard("تعذر إتمام الطلب", vm.purchaseError.orEmpty(), error = true) }
+            vm.purchaseOptions?.let { options ->
+                item {
+                    KUNCard {
+                        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("إعداد طلبك", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            Text("اختر المدة ثم أدخل بيانات الدخول. لن يتم الخصم قبل تأكيد السعر.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("المدة", fontWeight = FontWeight.Bold)
+                            options.plans.forEach { plan ->
+                                FilterChip(selected = selectedPlan?.id == plan.id, onClick = { selectedPlan = plan }, label = { Text("${plan.name} — ${"%.2f".format(Locale.US, plan.price)} دولار") }, modifier = Modifier.fillMaxWidth())
+                            }
+                            if (options.locations.size > 1) {
+                                Text("الموقع", fontWeight = FontWeight.Bold)
+                                options.locations.forEach { location -> FilterChip(selected = selectedLocation?.id == location.id, onClick = { selectedLocation = location }, label = { Text(location.label.ifBlank { "الموقع المتاح" }) }, modifier = Modifier.fillMaxWidth()) }
+                            }
+                            OutlinedTextField(username, { username = it }, modifier = Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, shape = RoundedCornerShape(15.dp))
+                            OutlinedTextField(password, { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(15.dp))
+                            val plan = selectedPlan
+                            val location = selectedLocation ?: options.locations.firstOrNull()
+                            if (plan != null) {
+                                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) { Text("الإجمالي: ${"%.2f".format(Locale.US, plan.price)} دولار — رصيدك: ${"%.2f".format(Locale.US, vm.wallet?.balance ?: 0.0)} ${vm.wallet?.currency ?: "USD"}", Modifier.fillMaxWidth().padding(12.dp), fontWeight = FontWeight.Bold) }
+                            }
+                            Button(onClick = { if (plan != null && location != null) vm.confirmProxyPurchase(product, options, plan, location, username.trim(), password, onPurchased) }, enabled = !vm.purchaseLoading && plan != null && location != null && username.trim().length >= 3 && password.length >= 6, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
+                                if (vm.purchaseLoading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("تأكيد الشراء والخصم من المحفظة", fontWeight = FontWeight.Bold)
+                            }
+                            TextButton(onClick = { vm.closePurchase() }, modifier = Modifier.fillMaxWidth()) { Text("إلغاء") }
+                        }
+                    }
                 }
             }
         }

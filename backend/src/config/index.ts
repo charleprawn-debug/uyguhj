@@ -21,6 +21,11 @@ export const config = {
   auth: { jwtSecret: process.env.JWT_SECRET ?? '', jwtRefreshSecret: process.env.JWT_REFRESH_SECRET ?? process.env.JWT_SECRET ?? '' },
   encryption: { key: process.env.ENCRYPTION_KEY ?? '', algorithm: process.env.ENCRYPTION_ALGORITHM ?? 'aes-256-cbc' },
   logging: { level: process.env.LOG_LEVEL ?? 'info' },
+  ezProxy: {
+    baseUrl: process.env.EZ_PROXY_API_BASE_URL ?? 'https://api.ez-proxy.net/v1',
+    token: process.env.EZ_PROXY_API_TOKEN ?? '',
+    timeoutMs: number('EZ_PROXY_TIMEOUT_MS', 20000),
+  },
   corsOrigins: Array.from(new Set((process.env.CORS_ORIGINS ?? 'http://localhost:3001,http://localhost:3002').split(',').map((v) => v.trim()).filter(Boolean).concat('https://uyguhj-production.up.railway.app'))),
   rateLimit: { windowMs: number('RATE_LIMIT_WINDOW_MS', 900000), max: number('RATE_LIMIT_MAX_REQUESTS', 100) },
 };

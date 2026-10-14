@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth';
 import { supabaseAdmin } from '../utils/supabase';
+import { encryptionService } from '../utils/encryption';
 
 const router = Router();
 router.use(requireAuth);
@@ -33,6 +34,16 @@ router.get('/wallet/transactions', async (req, res) => {
   const { data, error } = await supabaseAdmin.from('wallet_transactions').select('id,amount,balance_after,transaction_type,status,description,reference_id,created_at').eq('user_id', req.user!.id).order('created_at', { ascending: false }).limit(100);
   if (error) return res.status(500).json({ error: { code: 'WALLET_HISTORY_UNAVAILABLE', message: 'Could not load wallet history' } });
   return res.json({ data: data ?? [] });
+});
+
+router.get('/proxies', async (req, res) => {
+  const { data, error } = await supabaseAdmin.from('user_proxy_credentials').select('id,order_id,provider_proxy_id,protocol,host,port,username,password_encrypted,proxy_url,status,expires_at,location,created_at').eq('user_id', req.user!.id).order('created_at', { ascending: false });
+  if (error) return res.status(500).json({ error: { code: 'PROXIES_UNAVAILABLE', message: 'Could not load saved proxies' } });
+  try {
+    return res.json({ data: (data ?? []).map((row) => ({ ...row, password_encrypted: undefined, password: encryptionService.decrypt(row.password_encrypted) })) });
+  } catch {
+    return res.status(500).json({ error: { code: 'PROXY_CREDENTIALS_UNAVAILABLE', message: 'Could not decrypt saved proxy credentials' } });
+  }
 });
 
 router.post('/wallet/top-up', async (_req, res) => res.status(409).json({ error: { code: 'TOP_UP_NOT_AVAILABLE', message: 'Wallet top-up methods are not available yet' } }));
