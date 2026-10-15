@@ -136,11 +136,15 @@ router.patch('/top-up-methods/:code', async (req, res) => {
 
 router.get('/top-up-requests', async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit ?? 100), 1), 250);
-  let query = supabaseAdmin.from('wallet_topup_requests').select('id,user_id,method_code,submitted_amount,submitted_currency,expected_usd,transaction_reference,status,verification_source,admin_note,created_at,updated_at,users(email,full_name)').order('created_at', { ascending: false }).limit(limit);
+  let query = supabaseAdmin.from('wallet_topup_requests').select('id,user_id,method_code,submitted_amount,submitted_currency,expected_usd,transaction_reference,status,verification_source,admin_note,created_at,updated_at').order('created_at', { ascending: false }).limit(limit);
   if (typeof req.query.status === 'string' && ['pending', 'verified', 'rejected', 'expired'].includes(req.query.status)) query = query.eq('status', req.query.status);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: { code: 'TOPUP_REQUESTS_UNAVAILABLE', message: 'Could not load top-up requests' } });
-  return res.json({ data: data ?? [] });
+  const rows = data ?? [];
+  const userIds = [...new Set(rows.map((row) => row.user_id))];
+  const { data: users } = userIds.length ? await supabaseAdmin.from('users').select('id,email,full_name').in('id', userIds) : { data: [] };
+  const usersById = new Map((users ?? []).map((user) => [user.id, user]));
+  return res.json({ data: rows.map((row) => ({ ...row, users: usersById.get(row.user_id) ?? null })) });
 });
 
 router.post('/top-up-requests/:id/review', async (req, res) => {
