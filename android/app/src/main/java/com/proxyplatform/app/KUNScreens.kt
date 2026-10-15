@@ -397,7 +397,7 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                             Text("5. اختر المدة", fontWeight = FontWeight.Bold)
                             options.plans.forEach { plan -> FilterChip(selected = selectedPlan?.id == plan.id, onClick = { selectedPlan = plan; review = false }, label = { Text("${plan.name ?: "خطة"} — ${"%.2f".format(Locale.US, plan.price)} دولار") }, modifier = Modifier.fillMaxWidth()) }
                             val ready = username.trim().length >= 3 && password.length >= 6 && selectedPlan != null
-                            Button(onClick = { review = true }, enabled = ready && !vm.purchaseLoading, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("مراجعة الطلب", fontWeight = FontWeight.Bold) }
+                            Button(onClick = { review = true }, enabled = ready && !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("مراجعة الطلب", fontWeight = FontWeight.Bold) }
                         } }
                     }
                     if (review && selectedProvider != null && selectedPlan != null) item {
@@ -412,7 +412,7 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                             Button(onClick = { vm.confirmProxyPurchase(options, plan, selectedProvider!!, username.trim(), password) { purchased ->
                                 runCatching { ProxyProfileStore(context.applicationContext).save(SavedProxy(UUID.randomUUID().toString(), "${selectedProvider!!.country} • ${selectedProvider!!.provider}", purchased.protocol, purchased.host, purchased.port, true, purchased.username, purchased.password)) }
                                 section = "proxies"; vm.loadRemoteProxies()
-                            } }, enabled = !vm.purchaseLoading, Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp)) {
+                            } }, enabled = !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp)) {
                                 if (vm.purchaseLoading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("تأكيد الشراء والخصم من المحفظة", fontWeight = FontWeight.Bold)
                             }
                         } }
