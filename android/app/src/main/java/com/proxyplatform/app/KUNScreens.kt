@@ -233,22 +233,12 @@ private fun AuthModeButton(label: String, selected: Boolean, modifier: Modifier 
 internal fun MainShell(vm: AppViewModel) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var screen by remember { mutableStateOf(Screen.MARKET) }
-    var selectedProduct by remember { mutableStateOf<Product?>(null) }
-
-    if (selectedProduct != null) {
-        ProductDetails(selectedProduct!!, vm, onBack = { selectedProduct = null }, onPurchased = { purchased ->
-            ProxyProfileStore(context.applicationContext).save(SavedProxy(UUID.randomUUID().toString(), selectedProduct!!.name, purchased.protocol, purchased.host, purchased.port, true, purchased.username, purchased.password))
-            selectedProduct = null
-        })
-        return
-    }
-
     LaunchedEffect(Unit) { vm.loadPlansAndWallet() }
     LaunchedEffect(screen) {
         AdvancedOperationLog.info(context, "App navigation: ${screen.name}.")
         vm.clearError()
         when (screen) {
-            Screen.MARKET -> vm.loadProducts()
+            Screen.MARKET -> vm.loadMarket()
             Screen.PROFILE -> { vm.loadProfile(); vm.loadPlansAndWallet() }
             Screen.SUBSCRIPTIONS -> vm.loadSubscriptions()
             Screen.PROXY -> Unit
@@ -324,7 +314,7 @@ internal fun MainShell(vm: AppViewModel) {
     ) { padding ->
         Crossfade(targetState = screen, modifier = Modifier.fillMaxSize()) { destination ->
             when (destination) {
-                Screen.MARKET -> Marketplace(vm, padding) { selectedProduct = it }
+                Screen.MARKET -> Marketplace(vm, padding)
                 Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding) { screen = Screen.MARKET }
                 Screen.PROXY -> FeatureGate(vm.access.vpn || vm.access.advanced, "لا يوجد اشتراك اتصال نشط") { ProxyScreen(padding) }
                 Screen.SIM -> FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") { SimScreen(padding) }
@@ -336,212 +326,134 @@ internal fun MainShell(vm: AppViewModel) {
 }
 
 @Composable
-internal fun Marketplace(vm: AppViewModel, padding: PaddingValues, onProductClick: (Product) -> Unit) {
-    var featuredOnly by remember { mutableStateOf(false) }
-    val visibleProducts = remember(vm.products, featuredOnly) {
-        vm.products.filter { !featuredOnly || it.featured }
+internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var section by remember { mutableStateOf("home") }
+    var selectedCountry by remember { mutableStateOf<String?>(null) }
+    var selectedState by remember { mutableStateOf<String?>(null) }
+    var selectedProvider by remember { mutableStateOf<ProxyPurchaseLocation?>(null) }
+    var selectedPlan by remember { mutableStateOf<ProxyPurchasePlan?>(null) }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var review by remember { mutableStateOf(false) }
+    val options = vm.purchaseOptions
+    val locations = options?.locations.orEmpty()
+    val countries = locations.map { it.country }.filter { it.isNotBlank() }.distinct().sorted()
+    val states = locations.filter { it.country == selectedCountry }.map { it.state }.filter { it.isNotBlank() }.distinct().sorted()
+    val providers = locations.filter { it.country == selectedCountry && it.state == selectedState }
+    val activeProxies = vm.remoteProxies.filter { it.status.isBlank() || it.status.equals("active", true) }
+
+    LaunchedEffect(section) {
+        if (section == "purchase" && vm.purchaseOptions == null) vm.loadPurchaseOptions()
+        if (section == "proxies") vm.loadRemoteProxies()
+    }
+    LaunchedEffect(vm.purchaseOptions) {
+        selectedCountry = null; selectedState = null; selectedProvider = null; selectedPlan = null; review = false
     }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
-        contentPadding = PaddingValues(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("المنتجات المتاحة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("المعلومات والأسعار تُحمّل من الخدمة مباشرةً.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = KunPalette.PrimaryDeep)) {
+                Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(KunPalette.PrimaryDeep, KunPalette.Primary, KunPalette.Cyan))).padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("السوق", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.ExtraBold)
+                    Text("إدارة بروكسياتك وشراء اتصال جديد بخطوات واضحة وسريعة.", color = Color.White.copy(alpha = .88f), style = MaterialTheme.typography.bodyMedium)
                 }
-                FilterChip(
-                    selected = featuredOnly,
-                    onClick = { featuredOnly = !featuredOnly },
-                    label = { Text("المميزة") },
-                )
             }
         }
-        if (vm.productsError != null && vm.products.isNotEmpty()) {
-            item {
-                StateCard(
-                    title = "تعذّر تحديث السوق",
-                    message = "نعرض المنتجات الحقيقية التي سبق تحميلها. أعد المحاولة لجلب أحدث البيانات.",
-                    error = true,
-                    actionLabel = "إعادة المحاولة",
-                    onAction = { vm.loadProducts() },
-                )
-            }
-        } else if (vm.productsLoading && vm.products.isEmpty()) {
-            item {
-                StateCard(
-                    title = "جارٍ تحميل السوق",
-                    message = "نطلب المنتجات المتاحة من الخدمة. لن نعرض بيانات تجريبية.",
-                    loading = true,
-                )
-            }
-        } else if (vm.productsError != null && vm.products.isEmpty()) {
-            item {
-                StateCard(
-                    title = "السوق غير متاح مؤقتًا",
-                    message = vm.productsError.orEmpty(),
-                    error = true,
-                    actionLabel = "إعادة المحاولة",
-                    onAction = { vm.loadProducts() },
-                )
-            }
-        } else if (visibleProducts.isEmpty()) {
-            item {
-                StateCard(
-                    title = if (featuredOnly) "لا توجد منتجات مميزة الآن" else "لا توجد منتجات متاحة حاليًا",
-                    message = if (featuredOnly) "أوقف التصفية لعرض جميع المنتجات." else "لم تنشر الخدمة منتجات متاحة بعد. ستظهر هنا عند توفر بيانات حقيقية.",
-                    actionLabel = if (featuredOnly) "عرض جميع المنتجات" else "تحديث السوق",
-                    onAction = { if (featuredOnly) featuredOnly = false else vm.loadProducts() },
-                )
-            }
+        if (section == "home") {
+            item { MarketActionCard("بروكسياتي", "عرض البروكسيات النشطة واختيار البروكسي المستخدم", "فتح بروكسياتي") { section = "proxies" } }
+            item { MarketActionCard("شراء بروكسي", "اختر الدولة والولاية والمزود والمدة ثم راجع السعر قبل الخصم", "ابدأ الشراء", highlighted = true) { section = "purchase" } }
         } else {
-            items(visibleProducts, key = { it.id }) { product -> ProductCard(product, onProductClick) }
-        }
-    }
-}
-
-@Composable
-private fun ProductCard(product: Product, onClick: (Product) -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, KunPalette.Border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
-        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(product.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    if (product.description.isNotBlank()) {
-                        Text(product.description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            item { TextButton(onClick = { section = "home"; vm.closePurchase() }) { Text("رجوع إلى السوق") } }
+            if (section == "proxies") {
+                item { Text("بروكسياتي", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
+                if (vm.remoteProxiesLoading) item { StateCard("جارٍ تحميل البروكسيات", "نقرأ البروكسيات المرتبطة بحسابك.", loading = true) }
+                else if (vm.remoteProxiesError != null) item { StateCard("تعذر تحميل البروكسيات", vm.remoteProxiesError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadRemoteProxies() }) }
+                else if (activeProxies.isEmpty()) item { StateCard("لا توجد بروكسيات نشطة", "اشترِ بروكسيًا جديدًا ليظهر هنا تلقائيًا.", actionLabel = "شراء بروكسي", onAction = { section = "purchase" }) }
+                else items(activeProxies, key = { it.id }) { proxy ->
+                    RemoteProxyCard(proxy) {
+                        runCatching { ProxyProfileStore(context.applicationContext).save(SavedProxy(proxy.id.ifBlank { UUID.randomUUID().toString() }, proxy.location.ifBlank { "بروكسي محفوظ" }, proxy.protocol, proxy.host, proxy.port, proxy.username.isNotBlank(), proxy.username, proxy.password)) }
+                            .onSuccess { section = "home" }
                     }
                 }
-                if (product.featured) FeaturePill("مميز", color = KunPalette.Warning, container = KunPalette.WarningSoft)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                if (product.protocol.isNotBlank()) FeaturePill(product.protocol)
-                if (product.ipType.isNotBlank()) FeaturePill(product.ipType, color = KunPalette.Success, container = KunPalette.SuccessSoft)
-            }
-            val location = listOf(product.city, product.country).filter { it.isNotBlank() }.distinct().joinToString(" • ")
-            if (location.isNotBlank()) Text(location, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(KunPalette.Background).padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("السعر اليومي", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(product.daily.ifBlank { "غير محدد" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
-                Box(Modifier.width(1.dp).height(34.dp).background(KunPalette.Border))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text("السعر الشهري", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(product.monthly.ifBlank { "غير محدد" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                }
-            }
-            OutlinedButton(onClick = { onClick(product) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(15.dp)) {
-                Text("عرض تفاصيل المنتج", fontWeight = FontWeight.Bold)
-            }
-        }
-    }
-}
-
-@Composable
-internal fun ProductDetails(product: Product, vm: AppViewModel, onBack: () -> Unit, onPurchased: (PurchasedProxy) -> Unit) {
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var selectedPlan by remember { mutableStateOf<ProxyPurchasePlan?>(null) }
-    var selectedLocation by remember { mutableStateOf<ProxyPurchaseLocation?>(null) }
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    TextButton(onClick = onBack) { Text("رجوع") }
-                    Text(product.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    BrandMark(38.dp)
-                }
-            }
-        },
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            item {
-                Card(shape = RoundedCornerShape(26.dp), colors = CardDefaults.cardColors(containerColor = KunPalette.PrimaryDeep)) {
-                    Column(
-                        Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(KunPalette.PrimaryDeep, KunPalette.Primary, KunPalette.Cyan))).padding(22.dp),
-                        verticalArrangement = Arrangement.spacedBy(9.dp),
-                    ) {
-                        FeaturePill(product.protocol.ifBlank { "بروكسي" }, color = KunPalette.PrimaryDeep, container = Color.White)
-                        Text(product.name, style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.ExtraBold)
-                        if (product.description.isNotBlank()) Text(product.description, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.9f))
+            } else {
+                item { Text("شراء بروكسي", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
+                if (vm.purchaseError != null) item { StateCard("تعذر تحميل خيارات الشراء", vm.purchaseError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.closePurchase(); vm.loadPurchaseOptions() }) }
+                if (vm.purchaseLoading && options == null) item { StateCard("جارٍ تحميل الدول", "نطلب الخيارات المتاحة من مزود الخدمة.", loading = true) }
+                else if (options != null) {
+                    item { SelectionStep("1", "اختر الدولة", countries, selectedCountry) { selectedCountry = it; selectedState = null; selectedProvider = null; review = false } }
+                    if (selectedCountry != null) item { SelectionStep("2", "اختر الولاية", states, selectedState) { selectedState = it; selectedProvider = null; review = false } }
+                    if (selectedState != null) item { SelectionStep("3", "اختر المزود", providers.map { it.provider.ifBlank { "مزود متاح" } }.distinct(), selectedProvider?.provider) { name -> selectedProvider = providers.firstOrNull { it.provider.ifBlank { "مزود متاح" } == name }; review = false } }
+                    if (selectedProvider != null) item {
+                        KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text("4. بيانات البروكسي", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text("ستُستخدم هذه البيانات لإنشاء البروكسي لدى المزود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, shape = RoundedCornerShape(15.dp))
+                            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(15.dp))
+                            Text("5. اختر المدة", fontWeight = FontWeight.Bold)
+                            options.plans.forEach { plan -> FilterChip(selected = selectedPlan?.id == plan.id, onClick = { selectedPlan = plan; review = false }, label = { Text("${plan.name ?: "خطة"} — ${"%.2f".format(Locale.US, plan.price)} دولار") }, modifier = Modifier.fillMaxWidth()) }
+                            val ready = username.trim().length >= 3 && password.length >= 6 && selectedPlan != null
+                            Button(onClick = { review = true }, enabled = ready && !vm.purchaseLoading, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("مراجعة الطلب", fontWeight = FontWeight.Bold) }
+                        } }
                     }
-                }
-            }
-            item {
-                KUNCard {
-                    Column(Modifier.padding(horizontal = 18.dp, vertical = 8.dp)) {
-                        Text("تفاصيل المنتج", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
-                        val location = listOf(product.country, product.city).filter { it.isNotBlank() }.distinct().joinToString(" • ")
-                        KeyValueRow("الموقع", location)
-                        KeyValueRow("البروتوكول", product.protocol)
-                        KeyValueRow("نوع عنوان IP", product.ipType)
-                        KeyValueRow("السعر اليومي", product.daily)
-                        KeyValueRow("السعر الأسبوعي", product.weekly)
-                        KeyValueRow("السعر الشهري", product.monthly)
-                    }
-                }
-            }
-            item {
-                Button(onClick = { vm.beginProxyPurchase(product) }, enabled = !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
-                    if (vm.purchaseLoading && vm.purchaseOptions == null) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("شراء بروكسي", fontWeight = FontWeight.Bold)
-                }
-            }
-            if (vm.purchaseError != null) item { StateCard("تعذر إتمام الطلب", vm.purchaseError.orEmpty(), error = true) }
-            vm.purchaseOptions?.let { options ->
-                item {
-                    KUNCard {
-                        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("إعداد طلبك", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                            Text("اختر المدة ثم أدخل بيانات الدخول. لن يتم الخصم قبل تأكيد السعر.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("المدة", fontWeight = FontWeight.Bold)
-                            options.plans.forEach { plan ->
-                                FilterChip(selected = selectedPlan?.id == plan.id, onClick = { selectedPlan = plan }, label = { Text("${plan.name} — ${"%.2f".format(Locale.US, plan.price)} دولار") }, modifier = Modifier.fillMaxWidth())
-                            }
-                            if (options.locations.size > 1) {
-                                Text("الموقع", fontWeight = FontWeight.Bold)
-                                options.locations.forEach { location -> FilterChip(selected = selectedLocation?.id == location.id, onClick = { selectedLocation = location }, label = { Text(location.label.ifBlank { "الموقع المتاح" }) }, modifier = Modifier.fillMaxWidth()) }
-                            }
-                            OutlinedTextField(username, { username = it }, modifier = Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, shape = RoundedCornerShape(15.dp))
-                            OutlinedTextField(password, { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(15.dp))
-                            val plan = selectedPlan
-                            val location = selectedLocation ?: options.locations.firstOrNull()
-                            if (plan != null) {
-                                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) { Text("الإجمالي: ${"%.2f".format(Locale.US, plan.price)} دولار — رصيدك: ${"%.2f".format(Locale.US, vm.wallet?.balance ?: 0.0)} ${vm.wallet?.currency ?: "USD"}", Modifier.fillMaxWidth().padding(12.dp), fontWeight = FontWeight.Bold) }
-                            }
-                            Button(onClick = { if (plan != null && location != null) vm.confirmProxyPurchase(product, options, plan, location, username.trim(), password, onPurchased) }, enabled = !vm.purchaseLoading && plan != null && location != null && username.trim().length >= 3 && password.length >= 6, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
+                    if (review && selectedProvider != null && selectedPlan != null) item {
+                        val plan = selectedPlan!!
+                        KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("مراجعة وتأكيد", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                            KeyValueRow("الدولة", selectedProvider!!.country)
+                            KeyValueRow("الولاية", selectedProvider!!.state)
+                            KeyValueRow("المزود", selectedProvider!!.provider)
+                            KeyValueRow("المدة", plan.name ?: "خطة")
+                            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) { Text("الإجمالي: ${"%.2f".format(Locale.US, plan.price)} دولار — رصيدك: ${"%.2f".format(Locale.US, vm.wallet?.balance ?: 0.0)} ${vm.wallet?.currency ?: "USD"}", Modifier.fillMaxWidth().padding(12.dp), fontWeight = FontWeight.Bold) }
+                            Button(onClick = { vm.confirmProxyPurchase(options, plan, selectedProvider!!, username.trim(), password) { purchased ->
+                                runCatching { ProxyProfileStore(context.applicationContext).save(SavedProxy(UUID.randomUUID().toString(), "${selectedProvider!!.country} • ${selectedProvider!!.provider}", purchased.protocol, purchased.host, purchased.port, true, purchased.username, purchased.password)) }
+                                section = "proxies"; vm.loadRemoteProxies()
+                            } }, enabled = !vm.purchaseLoading, Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp)) {
                                 if (vm.purchaseLoading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("تأكيد الشراء والخصم من المحفظة", fontWeight = FontWeight.Bold)
                             }
-                            TextButton(onClick = { vm.closePurchase() }, modifier = Modifier.fillMaxWidth()) { Text("إلغاء") }
-                        }
+                        } }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MarketActionCard(title: String, description: String, action: String, highlighted: Boolean = false, onClick: () -> Unit) {
+    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, KunPalette.Border)) {
+        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+            Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onClick, Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(15.dp)) { Text(action, fontWeight = FontWeight.Bold) }
+        }
+    }
+}
+
+@Composable
+private fun SelectionStep(number: String, title: String, values: List<String>, selected: String?, onSelect: (String) -> Unit) {
+    KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Text("$number. $title", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        if (values.isEmpty()) Text("لا توجد خيارات متاحة حاليًا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        values.forEach { value -> FilterChip(selected = selected == value, onClick = { onSelect(value) }, label = { Text(value.ifBlank { "متاح" }) }, modifier = Modifier.fillMaxWidth()) }
+    } }
+}
+
+@Composable
+private fun RemoteProxyCard(proxy: RemoteProxy, onSelect: () -> Unit) {
+    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, KunPalette.Border)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(proxy.location.ifBlank { "بروكسي محفوظ" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                FeaturePill(if (proxy.status.equals("active", true)) "نشط" else proxy.status, color = if (proxy.status.equals("active", true)) KunPalette.Success else KunPalette.Warning, container = if (proxy.status.equals("active", true)) KunPalette.SuccessSoft else KunPalette.WarningSoft)
+            }
+            Text("${proxy.protocol.uppercase()} • ${proxy.host}:${proxy.port}", style = MaterialTheme.typography.bodyMedium)
+            if (proxy.expiresAt.isNotBlank()) Text("ينتهي: ${proxy.expiresAt}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onSelect, Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) { Text("استخدام هذا البروكسي", fontWeight = FontWeight.Bold) }
         }
     }
 }

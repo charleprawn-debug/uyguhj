@@ -4,7 +4,7 @@ Proxy Platform is a production-oriented MVP foundation for a proxy marketplace. 
 
 ## Implemented client flow
 
-The Android client now includes registration, login, persisted session state, logout, real product loading from the API, featured filtering, product detail pages, profile, email verification status, and subscription reads. It never receives the Supabase service-role key. It uses `BuildConfig.API_BASE_URL` and sends the user access token to the backend.
+The Android client now includes registration, login, persisted session state, logout, a provider-driven marketplace, active saved proxies, profile, email verification status, and subscription reads. The marketplace intentionally shows only **بروكسياتي** and **شراء بروكسي**; it does not display the legacy `proxy_products` database catalog. It never receives the Supabase service-role key. It uses `BuildConfig.API_BASE_URL` and sends the user access token to the backend.
 
 ## Railway deployment
 
@@ -70,7 +70,7 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 
 ## Database
 
-Run `database/01_schema.sql`, the corrected `database/02_seed_data.sql`, then `database/03_wallet_plans.sql`, `database/04_user_feature_grants.sql`, and `database/05_subscription_plans.sql` in the Supabase SQL editor. The migrations add wallet balances, transaction history, independent subscription packages, atomic wallet purchases, and individual admin feature grants. Subscription packages are separate from marketplace proxy products. Wallet top-up controls remain intentionally unavailable until payment methods are added. The schema uses Supabase Auth's `auth.users` table and requires Supabase rather than plain PostgreSQL.
+Run `database/01_schema.sql`, the corrected `database/02_seed_data.sql`, then `database/03_wallet_plans.sql`, `database/04_user_feature_grants.sql`, `database/05_subscription_plans.sql`, `database/06_market_proxy_purchases.sql`, and `database/07_provider_marketplace.sql` in the Supabase SQL editor. The migrations add wallet balances, transaction history, independent subscription packages, atomic wallet purchases, individual admin feature grants, and provider-backed proxy checkout. The Android marketplace no longer displays `proxy_products`; the provider catalog supplies countries, states, providers, plans, and prices. `07_provider_marketplace.sql` makes the legacy product link optional for direct provider purchases. Wallet top-up controls remain intentionally unavailable until payment methods are added. The schema uses Supabase Auth's `auth.users` table and requires Supabase rather than plain PostgreSQL.
 
 ## Current release boundary
 
