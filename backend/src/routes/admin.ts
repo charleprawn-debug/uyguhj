@@ -113,4 +113,50 @@ router.patch('/plans/:id', async (req, res) => {
   return res.json({ data });
 });
 
+router.get('/top-up-methods', async (_req, res) => {
+  const { data, error } = await supabaseAdmin.from('wallet_topup_methods').select('code,name,currency,network,address,min_amount,exchange_rate,instructions,is_enabled,sort_order,updated_at').order('sort_order', { ascending: true });
+  if (error) return res.status(500).json({ error: { code: 'TOPUP_METHODS_UNAVAILABLE', message: 'Could not load top-up methods' } });
+  return res.json({ data: data ?? [] });
+});
+
+router.patch('/top-up-methods/:code', async (req, res) => {
+  const body = req.body ?? {};
+  const patch: Record<string, unknown> = {};
+  if (typeof body.address === 'string') patch.address = body.address.trim().slice(0, 500);
+  if (typeof body.instructions === 'string') patch.instructions = body.instructions.trim().slice(0, 2000);
+  if (body.minAmount !== undefined) { const value = Number(body.minAmount); if (!Number.isFinite(value) || value < 0) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid minimum amount' } }); patch.min_amount = value; }
+  if (body.exchangeRate !== undefined) { const value = Number(body.exchangeRate); if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid exchange rate' } }); patch.exchange_rate = value; }
+  if (typeof body.isEnabled === 'boolean') patch.is_enabled = body.isEnabled;
+  if (body.sortOrder !== undefined) { const value = Number(body.sortOrder); if (!Number.isInteger(value)) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Invalid sort order' } }); patch.sort_order = value; }
+  if (!Object.keys(patch).length) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'No editable fields supplied' } });
+  const { data, error } = await supabaseAdmin.from('wallet_topup_methods').update({ ...patch, updated_by: req.user!.id, updated_at: new Date().toISOString() }).eq('code', req.params.code).select('*').single();
+  if (error) return res.status(400).json({ error: { code: 'TOPUP_METHOD_UPDATE_FAILED', message: error.message } });
+  return res.json({ data });
+});
+
+router.get('/top-up-requests', async (req, res) => {
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 100), 1), 250);
+  let query = supabaseAdmin.from('wallet_topup_requests').select('id,user_id,method_code,submitted_amount,submitted_currency,expected_usd,transaction_reference,status,verification_source,admin_note,created_at,updated_at,users(email,full_name)').order('created_at', { ascending: false }).limit(limit);
+  if (typeof req.query.status === 'string' && ['pending', 'verified', 'rejected', 'expired'].includes(req.query.status)) query = query.eq('status', req.query.status);
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: { code: 'TOPUP_REQUESTS_UNAVAILABLE', message: 'Could not load top-up requests' } });
+  return res.json({ data: data ?? [] });
+});
+
+router.post('/top-up-requests/:id/review', async (req, res) => {
+  const decision = String(req.body?.decision ?? '').toLowerCase();
+  if (!['approve', 'reject'].includes(decision)) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'Decision must be approve or reject' } });
+  const adminNote = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 1000) : null;
+  if (decision === 'reject') {
+    const { data, error } = await supabaseAdmin.from('wallet_topup_requests').update({ status: 'rejected', reviewed_by: req.user!.id, reviewed_at: new Date().toISOString(), admin_note: adminNote, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('status', 'pending').select('*').single();
+    if (error) return res.status(409).json({ error: { code: 'TOPUP_REVIEW_FAILED', message: error.message } });
+    return res.json({ data });
+  }
+  const { data, error } = await supabaseAdmin.rpc('approve_wallet_topup', { p_request_id: req.params.id, p_admin_id: req.user!.id, p_admin_note: adminNote });
+  if (error) return res.status(409).json({ error: { code: 'TOPUP_APPROVAL_FAILED', message: error.message } });
+  const result = Array.isArray(data) ? data[0] : data;
+  if (!result?.success) return res.status(409).json({ error: { code: 'TOPUP_APPROVAL_REJECTED', message: result?.message ?? 'Could not approve top-up' } });
+  return res.json({ data: result });
+});
+
 export default router;

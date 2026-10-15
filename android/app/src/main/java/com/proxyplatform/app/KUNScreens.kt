@@ -584,25 +584,79 @@ internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues, onWallet: (
 }
 
 @Composable
-private fun WalletCard(vm: AppViewModel) {
+private fun WalletCard(vm: AppViewModel, onTopUp: () -> Unit) {
     KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             Column { Text("المحفظة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("الرصيد المتاح", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Text(vm.wallet?.let { "%.2f ${it.currency}".format(Locale.US, it.balance) } ?: "—", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = KunPalette.Primary)
         }
-        OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("شحن الرصيد — قريبًا") }
+        Button(onClick = onTopUp, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("شحن الرصيد", fontWeight = FontWeight.Bold) }
         if (vm.walletTransactions.isNotEmpty()) { Text("آخر العمليات", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); vm.walletTransactions.take(3).forEach { tx -> KeyValueRow(tx.description, "${if (tx.amount >= 0) "+" else ""}%.2f".format(Locale.US, tx.amount)) } }
     } }
 }
 
 @Composable
 private fun WalletScreen(vm: AppViewModel, padding: PaddingValues) {
+    var topUpOpen by remember { mutableStateOf(false) }
+    var selectedMethod by remember { mutableStateOf<TopUpMethod?>(null) }
+    var amountText by remember { mutableStateOf("") }
+    var referenceText by remember { mutableStateOf("") }
     LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { PageHeading("حسابك", "المحفظة", "إدارة رصيدك ومراجعة جميع العمليات المالية.") }
-        item { WalletCard(vm) }
+        item { WalletCard(vm) { topUpOpen = true; selectedMethod = null; amountText = ""; referenceText = "" } }
+        if (topUpOpen) item {
+            KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Text("شحن المحفظة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+                    TextButton(onClick = { topUpOpen = false; vm.clearTopUp() }) { Text("إغلاق") }
+                }
+                if (vm.topUpError != null) StateCard("تعذر تنفيذ طلب الشحن", vm.topUpError.orEmpty(), error = true)
+                val created = vm.topUpCreated
+                if (created == null) {
+                    Text("اختر طريقة الشحن المناسبة لك.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    vm.topUpMethods.forEach { method ->
+                        FilterChip(selected = selectedMethod?.code == method.code, onClick = { selectedMethod = method; amountText = "" }, label = { Text(method.name) }, modifier = Modifier.fillMaxWidth(), enabled = method.address.isNotBlank())
+                    }
+                    if (vm.topUpMethods.isEmpty()) Text("لا توجد طرق شحن مهيأة حاليًا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    selectedMethod?.let { method ->
+                        Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(16.dp)) {
+                            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("أرسل المبلغ إلى العنوان التالي", fontWeight = FontWeight.Bold)
+                                Text(method.address, fontWeight = FontWeight.ExtraBold, color = KunPalette.Primary)
+                                if (method.network.isNotBlank()) Text("الشبكة: ${method.network}")
+                                Text("الحد الأدنى: ${method.minAmount} ${method.currency}")
+                                if (method.currency == "SYP") Text("سعر الصرف: 1 دولار = ${method.exchangeRate} ليرة سورية")
+                                if (method.instructions.isNotBlank()) Text(method.instructions, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        OutlinedTextField(amountText, { amountText = it }, Modifier.fillMaxWidth(), label = { Text("المبلغ الذي سترسله (${method.currency})") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), shape = RoundedCornerShape(15.dp))
+                        val amount = amountText.toDoubleOrNull()
+                        if (method.currency == "SYP" && amount != null && method.exchangeRate > 0) Text("سيضاف تقريبًا: ${"%.2f".format(Locale.US, amount / method.exchangeRate)} USD", color = KunPalette.Primary, fontWeight = FontWeight.Bold)
+                        Button(onClick = { if (amount != null) vm.createTopUp(method, amount) }, enabled = amount != null && amount > 0 && !vm.topUpLoading, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(15.dp)) {
+                            if (vm.topUpLoading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("تم الإرسال — تحقق من العملية", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                } else {
+                    Text("أدخل رقم العملية بعد إتمام التحويل.", style = MaterialTheme.typography.bodyMedium)
+                    Text("المبلغ المحتسب: ${"%.2f".format(Locale.US, created.expectedUsd)} USD", fontWeight = FontWeight.Bold, color = KunPalette.Primary)
+                    OutlinedTextField(referenceText, { referenceText = it }, Modifier.fillMaxWidth(), label = { Text("رقم العملية / Tx ID") }, singleLine = true, shape = RoundedCornerShape(15.dp))
+                    Button(onClick = { vm.verifyTopUp(created, referenceText.trim()) { } }, enabled = referenceText.trim().length >= 3 && !vm.topUpLoading, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(15.dp)) {
+                        if (vm.topUpLoading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("تحقق من العملية", fontWeight = FontWeight.Bold)
+                    }
+                    Text("سيظهر الطلب في السجل بحالة قيد التحقق، ولن يضاف الرصيد أكثر من مرة لنفس رقم العملية.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            } }
+        }
         item { Text("سجل العمليات", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
         if (vm.walletTransactions.isEmpty()) item { StateCard("لا توجد عمليات بعد", "ستظهر هنا عمليات الخصم والإضافة عند توفرها.") }
         items(vm.walletTransactions) { tx -> KUNCard { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(tx.description, fontWeight = FontWeight.Bold); Text(readableDate(tx.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Text("${if (tx.amount >= 0) "+" else ""}%.2f".format(Locale.US, tx.amount), fontWeight = FontWeight.ExtraBold, color = if (tx.amount >= 0) KunPalette.Success else KunPalette.Error) } } }
+        if (vm.topUpRequests.isNotEmpty()) item { Text("طلبات الشحن", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+        items(vm.topUpRequests, key = { it.id }) { request ->
+            KUNCard { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text(request.methodCode, fontWeight = FontWeight.Bold); Text("${request.amount} ${request.currency} • ${"%.2f".format(Locale.US, request.expectedUsd)} USD", style = MaterialTheme.typography.bodySmall); Text(request.reference, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                FeaturePill(statusLabel(request.status), color = if (request.status == "verified") KunPalette.Success else if (request.status == "rejected") KunPalette.Error else KunPalette.Warning, container = if (request.status == "verified") KunPalette.SuccessSoft else if (request.status == "rejected") KunPalette.ErrorSoft else KunPalette.WarningSoft)
+            } }
+        }
     }
 }
 
