@@ -17,6 +17,8 @@ export const config = {
   encryption: { key: process.env.ENCRYPTION_KEY ?? '', algorithm: process.env.ENCRYPTION_ALGORITHM ?? 'aes-256-cbc' },
   logging: { level: process.env.LOG_LEVEL ?? 'info' },
   ezProxy: { baseUrl: process.env.EZ_PROXY_API_BASE_URL ?? 'https://api.ez-proxy.net/v1', token: process.env.EZ_PROXY_API_TOKEN ?? '', timeoutMs: number('EZ_PROXY_TIMEOUT_MS', 20000) },
+  proxyCheap: { baseUrl: process.env.PROXY_CHEAP_API_BASE_URL ?? 'https://api.proxy-cheap.com/v2', apiKey: process.env.PROXY_CHEAP_API_KEY ?? '', apiSecret: process.env.PROXY_CHEAP_API_SECRET ?? '', timeoutMs: number('PROXY_CHEAP_TIMEOUT_MS', 20000) },
+  proxySeller: { baseUrl: process.env.PROXY_SELLER_API_BASE_URL ?? 'https://proxy-seller.com/personal/api/v2', apiKey: process.env.PROXY_SELLER_API_KEY ?? '', timeoutMs: number('PROXY_SELLER_TIMEOUT_MS', 20000) },
   payments: {
     syria: { baseUrl: process.env.SYRIATEL_API_BASE_URL ?? '', token: process.env.SYRIATEL_API_TOKEN ?? '', query: process.env.SYRIATEL_API_QUERY ?? '', timeoutMs: number('SYRIATEL_API_TIMEOUT_MS', number('SYRIA_API_TIMEOUT_MS', 15000)) },
     oxapay: { baseUrl: (process.env.OXAPAY_API_BASE ?? 'https://api.oxapay.com/v1').replace(/\/$/, ''), merchantKey: process.env.OXAPAY_MERCHANT_API_KEY ?? '', webhookUrl: process.env.OXAPAY_WEBHOOK_URL ?? '', timeoutMs: number('OXAPAY_API_TIMEOUT_MS', number('OXAPAY_TIMEOUT_MS', 15000)), feePaidByPayer: ['true', '1', 'yes'].includes((process.env.OXAPAY_FEE_PAID_BY_PAYER ?? 'false').toLowerCase()) },

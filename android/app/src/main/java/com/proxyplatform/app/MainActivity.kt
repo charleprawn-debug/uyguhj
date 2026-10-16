@@ -109,9 +109,10 @@ internal data class Product(
     val monthly: String,
     val featured: Boolean,
 )
-internal data class ProxyPurchasePlan(val id: Int, val name: String, val durationHours: Int, val price: Double)
+internal data class MarketplaceProvider(val id: String, val number: Int, val name: String, val description: String)
+internal data class ProxyPurchasePlan(val id: String, val name: String, val durationHours: Int, val price: Double)
 internal data class ProxyPurchaseLocation(
-    val id: Int,
+    val id: String,
     val countryCode: String,
     val country: String,
     val state: String,
@@ -120,7 +121,7 @@ internal data class ProxyPurchaseLocation(
 ) {
     val label: String get() = listOf(country, state, provider).filter { it.isNotBlank() }.joinToString(" • ")
 }
-internal data class ProxyPurchaseOptions(val protocol: String, val plans: List<ProxyPurchasePlan>, val locations: List<ProxyPurchaseLocation>)
+internal data class ProxyPurchaseOptions(val provider: String, val protocol: String, val plans: List<ProxyPurchasePlan>, val locations: List<ProxyPurchaseLocation>, val serviceId: String = "", val proxyType: String = "")
 internal data class RemoteProxy(val id: String, val protocol: String, val host: String, val port: Int, val username: String, val password: String, val status: String, val expiresAt: String, val location: String)
 internal data class PurchasedProxy(val protocol: String, val host: String, val port: Int, val username: String, val password: String, val url: String, val expiresAt: String)
 internal data class Profile(val email: String, val name: String, val role: String, val verified: Boolean)
@@ -204,14 +205,19 @@ internal class ApiClient(context: Context) {
             )
         }
     }
-    fun proxyPurchaseOptions(): ProxyPurchaseOptions {
-        val x = request("/products/purchase-options?protocol=socks5").getJSONObject("data")
-        val plans = x.getJSONArray("plans").let { a -> (0 until a.length()).map { i -> val p = a.getJSONObject(i); val name = p.optJSONObject("name")?.optString("ar").orEmpty().ifBlank { p.optJSONObject("name")?.optString("en") ?: "خطة" }; ProxyPurchasePlan(p.getInt("id"), name, p.optInt("duration_hours"), p.optDouble("price")) } }
-        val locations = x.getJSONArray("locations").let { a -> (0 until a.length()).map { i -> val l = a.getJSONObject(i); val c = l.optJSONObject("country"); val protocols = l.optJSONObject("protocols"); ProxyPurchaseLocation(l.getInt("id"), c?.optString("code").orEmpty(), c?.optString("name").orEmpty(), l.optString("state"), l.optString("isp"), setOf("http", "socks5").filter { protocols?.optBoolean(it, true) != false }.toSet()) } }
-        return ProxyPurchaseOptions(x.optString("protocol", "socks5"), plans, locations)
+    fun marketplaceProviders(): List<MarketplaceProvider> {
+        val a = request("/products/providers").getJSONArray("data")
+        return (0 until a.length()).map { i -> val x = a.getJSONObject(i); MarketplaceProvider(x.getString("id"), x.optInt("number"), x.optString("name"), x.optString("description")) }
     }
-    fun purchaseProxy(options: ProxyPurchaseOptions, planId: Int, locationId: Int, username: String, password: String): PurchasedProxy {
-        val x = request("/products/purchase-proxy", "POST", JSONObject().put("clientRequestId", UUID.randomUUID().toString()).put("planId", planId).put("locationId", locationId).put("protocol", options.protocol).put("username", username).put("password", password)).getJSONObject("data").getJSONObject("proxy")
+    fun proxyPurchaseOptions(provider: String = "ezproxy"): ProxyPurchaseOptions {
+        val x = request("/products/purchase-options?provider=$provider&protocol=socks5").getJSONObject("data")
+        val plans = x.getJSONArray("plans").let { a -> (0 until a.length()).map { i -> val p = a.getJSONObject(i); val label = p.optJSONObject("name")?.optString("ar").orEmpty().ifBlank { p.optJSONObject("name")?.optString("en") ?: p.optString("name", "خطة") }; ProxyPurchasePlan(p.optString("id", p.optString("code")), label, p.optInt("duration_hours"), p.optDouble("price")) } }
+        val locations = x.getJSONArray("locations").let { a -> (0 until a.length()).map { i -> val l = a.getJSONObject(i); val c = l.optJSONObject("country"); val protocols = l.optJSONObject("protocols"); ProxyPurchaseLocation(l.optString("id"), c?.optString("code").orEmpty().ifBlank { l.optString("country") }, c?.optString("name").orEmpty().ifBlank { l.optString("country") }, l.optString("state"), l.optString("isp"), setOf("http", "socks5").filter { protocols?.optBoolean(it, true) != false }.toSet()) } }
+        return ProxyPurchaseOptions(x.optString("provider", provider), x.optString("protocol", "socks5"), plans, locations, x.optString("serviceId"), x.optString("proxyType"))
+    }
+    fun purchaseProxy(options: ProxyPurchaseOptions, planId: String, locationId: String, username: String, password: String): PurchasedProxy {
+        val body = JSONObject().put("clientRequestId", UUID.randomUUID().toString()).put("provider", options.provider).put("planId", planId).put("locationId", locationId).put("country", locationId).put("protocol", options.protocol).put("username", username).put("password", password).put("periodMonths", 1)
+        val x = request("/products/purchase-proxy", "POST", body).getJSONObject("data").getJSONObject("proxy")
         return PurchasedProxy(x.optString("protocol", options.protocol), x.getString("host"), x.getInt("port"), x.optString("username", username), x.optString("password", password), x.optString("url"), x.optString("expires_at"))
     }
     fun proxies(): List<RemoteProxy> {
@@ -241,6 +247,10 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     var products by mutableStateOf<List<Product>>(emptyList()); private set
     var productsLoading by mutableStateOf(false); private set
     var productsError by mutableStateOf<String?>(null); private set
+    var marketplaceProviders by mutableStateOf<List<MarketplaceProvider>>(emptyList()); private set
+    var marketplaceProvidersLoading by mutableStateOf(false); private set
+    var marketplaceProvidersError by mutableStateOf<String?>(null); private set
+    var selectedMarketplaceProvider by mutableStateOf("ezproxy"); private set
     var purchaseOptions by mutableStateOf<ProxyPurchaseOptions?>(null); private set
     var purchaseLoading by mutableStateOf(false); private set
     var purchaseError by mutableStateOf<String?>(null); private set
@@ -309,14 +319,24 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     }
 
     fun loadMarket() = viewModelScope.launch {
-        loadPurchaseOptions()
+        loadMarketplaceProviders()
         loadRemoteProxies()
     }
+
+    fun loadMarketplaceProviders() = viewModelScope.launch {
+        if (marketplaceProvidersLoading || marketplaceProviders.isNotEmpty()) return@launch
+        marketplaceProvidersLoading = true; marketplaceProvidersError = null
+        try { marketplaceProviders = withContext(Dispatchers.IO) { api.marketplaceProviders() } }
+        catch (failure: Exception) { marketplaceProvidersError = failure.message ?: "تعذر تحميل مزودي السوق." }
+        finally { marketplaceProvidersLoading = false }
+    }
+
+    fun chooseMarketplaceProvider(provider: String) { selectedMarketplaceProvider = provider; purchaseOptions = null; purchaseError = null }
 
     fun loadPurchaseOptions() = viewModelScope.launch {
         if (purchaseOptions != null || purchaseLoading) return@launch
         purchaseLoading = true; purchaseError = null
-        try { purchaseOptions = withContext(Dispatchers.IO) { api.proxyPurchaseOptions() } }
+        try { purchaseOptions = withContext(Dispatchers.IO) { api.proxyPurchaseOptions(selectedMarketplaceProvider) } }
         catch (failure: Exception) { purchaseError = failure.message ?: "تعذر تحميل خيارات الشراء." }
         finally { purchaseLoading = false }
     }
