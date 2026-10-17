@@ -38,7 +38,6 @@ async function providerOptions(protocol = 'socks5') {
 const providerCatalog = [
   { id: 'ezproxy', number: 1, name: 'سيرفر 1', description: 'المزود الأساسي الحالي', kind: 'ezproxy' },
   { id: 'proxy-cheap', number: 2, name: 'سيرفر 2', description: 'Proxy-Cheap — أسعار مباشرة من المزود', kind: 'proxy-cheap' },
-  { id: 'proxy-seller', number: 3, name: 'سيرفر 3', description: 'Proxy-Seller — أسعار مباشرة من المزود', kind: 'proxy-seller' },
 ];
 const firstObject = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 const list = (value: unknown) => Array.isArray(value) ? value : [];

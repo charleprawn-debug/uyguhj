@@ -374,7 +374,7 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                 item { Text("اختر سيرفر الشراء", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
                 if (vm.marketplaceProvidersLoading) item { StateCard("جارٍ تحميل السيرفرات", "نجهز مزودي البروكسي المتاحين.", loading = true) }
                 else if (vm.marketplaceProvidersError != null) item { StateCard("تعذر تحميل السيرفرات", vm.marketplaceProvidersError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadMarketplaceProviders() }) }
-                else items(vm.marketplaceProviders, key = { it.id }) { provider ->
+                else items(vm.marketplaceProviders.filter { it.id != "proxy-seller" }, key = { it.id }) { provider ->
                     MarketActionCard(provider.name, provider.description, "المتابعة مع ${provider.name}", highlighted = provider.number == 1) { vm.chooseMarketplaceProvider(provider.id); section = "purchase"; vm.loadPurchaseOptions() }
                 }
             } else if (section == "proxies") {

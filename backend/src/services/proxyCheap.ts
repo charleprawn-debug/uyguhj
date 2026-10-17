@@ -25,7 +25,7 @@ class ProxyCheapService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.proxyCheap.timeoutMs);
     try {
-      const response = await fetch(`${this.baseUrl}${path}`, { ...init, signal: controller.signal, headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': config.proxyCheap.apiKey, 'X-Api-Secret': config.proxyCheap.apiSecret, ...(init.headers ?? {}) } });
+      const response = await fetch(`${this.baseUrl}${path}`, { ...init, signal: controller.signal, headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; KUN-Proxy/1.0)', 'X-Api-Key': config.proxyCheap.apiKey, 'X-Api-Secret': config.proxyCheap.apiSecret, ...(init.headers ?? {}) } });
       const raw = await response.text();
       let body: unknown = {};
       try { body = raw ? JSON.parse(raw) as unknown : {}; } catch { body = { errors: raw }; }
@@ -39,7 +39,7 @@ class ProxyCheapService {
     return asArray(body.services).map((item) => { const x = asObject(item); return { id: String(x.id ?? ''), label: String(x.label ?? x.id ?? ''), plans: asArray(x.plans).map((p) => { const y = asObject(p); return { id: String(y.id ?? ''), label: String(y.label ?? y.id ?? '') }; }) }; }).filter((x) => x.id);
   }
   async setup(serviceId: string, planId?: string): Promise<Json> {
-    const body = await this.request<Json>(`/order/${encodeURIComponent(serviceId)}`, { method: 'POST', body: JSON.stringify({ planId: planId ?? '' }) });
+    const body = await this.request<Json>(`/order/${encodeURIComponent(serviceId)}`, { method: 'POST', body: JSON.stringify({ planId: planId?.trim() || null }) });
     return body;
   }
   async price(serviceId: string, payload: Json): Promise<Json> {
