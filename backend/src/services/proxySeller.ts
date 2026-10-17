@@ -16,7 +16,11 @@ class ProxySellerService {
       const body = obj(JSON.parse(await response.text()));
       const rawErrors = body.errors;
       const errors = (Array.isArray(rawErrors) ? rawErrors : Object.values(obj(rawErrors))).flatMap((e) => Array.isArray(e) ? e : [e]).map((e) => typeof e === 'string' ? e : obj(e).message).filter(Boolean).join('; ');
-      if (!response.ok || body.status === 'error' || errors) throw new Error(errors || `Proxy-Seller request failed (${response.status})`);
+      if (!response.ok || body.status === 'error' || errors) {
+        const message = errors || `Proxy-Seller request failed (${response.status})`;
+        if (message.toLowerCase().includes('make order with resident first')) throw new Error('حساب Proxy-Seller لا يحتوي على باقة Residential مفعّلة. يجب إنشاء باقة Resident من لوحة المزود أولًا، لأن API العام لا يشتري هذه الباقة.');
+        throw new Error(message);
+      }
       return body as T;
     } finally { clearTimeout(timer); }
   }

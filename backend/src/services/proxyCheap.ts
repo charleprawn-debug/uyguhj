@@ -7,6 +7,16 @@ export type CheapProxy = { id: string; status: string; protocol: string; host: s
 
 const asObject = (value: unknown): Json => value && typeof value === 'object' ? value as Json : {};
 const asArray = (value: unknown) => Array.isArray(value) ? value : [];
+const providerErrorMessage = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(providerErrorMessage).filter(Boolean).join('; ');
+  if (value && typeof value === 'object') {
+    const item = value as Record<string, unknown>;
+    const messages = [item.message, item.detail, item.code, item.parameters].map(providerErrorMessage).filter(Boolean);
+    return messages.join(' ');
+  }
+  return '';
+};
 
 class ProxyCheapService {
   private get baseUrl() { return config.proxyCheap.baseUrl.replace(/\/$/, ''); }
@@ -17,9 +27,10 @@ class ProxyCheapService {
     try {
       const response = await fetch(`${this.baseUrl}${path}`, { ...init, signal: controller.signal, headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': config.proxyCheap.apiKey, 'X-Api-Secret': config.proxyCheap.apiSecret, ...(init.headers ?? {}) } });
       const raw = await response.text();
-      const body = raw ? JSON.parse(raw) as unknown : {};
+      let body: unknown = {};
+      try { body = raw ? JSON.parse(raw) as unknown : {}; } catch { body = { errors: raw }; }
       const errors = asObject(body).errors;
-      if (!response.ok || errors) throw new Error(typeof errors === 'string' ? errors : `Proxy-Cheap request failed (${response.status})`);
+      if (!response.ok || errors) throw new Error(providerErrorMessage(errors) || `Proxy-Cheap request failed (${response.status})`);
       return body as T;
     } finally { clearTimeout(timer); }
   }

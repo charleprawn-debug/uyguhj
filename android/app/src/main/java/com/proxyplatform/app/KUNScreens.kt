@@ -394,7 +394,7 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                 if (vm.purchaseLoading && options == null) item { StateCard("جارٍ تحميل الدول", "نطلب الخيارات المتاحة من مزود الخدمة.", loading = true) }
                 else if (options != null) {
                     if (options.provider != "ezproxy" && selectedPlan == null) item { SelectionStep("1", "اختر الباقة أو المنتج السكني", options.plans.map { it.name }, null) { name ->
-                        val plan = options.plans.firstOrNull { it.name == name }; selectedPlan = plan; if (options.provider == "proxy-cheap" && plan != null) vm.loadPurchaseOptionsFor(options.provider, plan.serviceId, plan.providerPlanId); review = false
+                        val plan = options.plans.firstOrNull { it.name == name }; selectedPlan = plan; review = false
                     } }
                     if (options.provider == "ezproxy" || selectedPlan != null) {
                         item { SelectionStep(if (options.provider == "ezproxy") "1" else "2", "اختر الدولة", countries, selectedCountry) { selectedCountry = it; selectedState = null; selectedProvider = null; review = false } }

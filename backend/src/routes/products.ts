@@ -60,11 +60,16 @@ const geoLocations = (geo: unknown) => list(geo).flatMap((country) => {
 async function externalProviderOptions(provider: string, requestedServiceId = '', requestedPlanId = '') {
   if (provider === 'proxy-cheap') {
     const services = await proxyCheapService.services();
-    const residential = services.find((service) => service.id === (requestedServiceId || 'static-residential-ipv4')) ?? services.find((service) => service.id.includes('residential'));
-    if (!residential) throw new Error('لم يعثر المزود على منتج Residential متاح.');
+    const residential = services.find((service) => service.id === (requestedServiceId || 'static-residential-ipv4'));
+    if (!residential || residential.id !== 'static-residential-ipv4') throw new Error('منتج Static Residential IPv4 غير متاح في حساب Proxy-Cheap حاليًا.');
     const plans = (residential.plans?.length ? residential.plans : [{ id: '', label: residential.label }]).map((plan) => ({ id: `${residential.id}::${plan.id}`, serviceId: residential.id, providerPlanId: plan.id, name: plan.label, duration_hours: 720, price: 0, currency: 'USD' }));
     const selectedPlan = requestedPlanId || residential.plans?.[0]?.id || '';
-    const setup = await proxyCheapService.setup(residential.id, selectedPlan);
+    let setup: Record<string, unknown>;
+    try { setup = await proxyCheapService.setup(residential.id, requestedPlanId); }
+    catch (error) {
+      if (!requestedPlanId) throw error;
+      setup = await proxyCheapService.setup(residential.id, '');
+    }
     const s = firstObject(setup);
     const countries = list(s.countries).map(optionObject);
     const locations = countries.flatMap((x) => [{ id: String(x.code ?? x.id ?? x.value ?? ''), country: String(x.name ?? x.label ?? x.code ?? ''), state: '', isp: '', protocols: { http: true, socks5: true } }, ...list(firstObject(s.regions)[String(x.code ?? x.id ?? '')]).map((region) => { const r = optionObject(region); return { id: `${String(x.code ?? x.id)}|${String(r.id ?? r.name)}`, country: String(x.name ?? x.code), state: String(r.label ?? r.id ?? r.name), isp: '', protocols: { http: true, socks5: true } }; }), ...list(firstObject(s.cities)[String(x.code ?? x.id ?? '')]).map((city) => { const c = optionObject(city); return { id: `${String(x.code ?? x.id)}|||${String(c.id ?? c.name)}`, country: String(x.name ?? x.code), state: String(c.region ?? ''), isp: '', protocols: { http: true, socks5: true } }; }), ...list(firstObject(s.isps)[String(x.code ?? x.id ?? '')]).map((isp) => { const i = optionObject(isp); return { id: `${String(x.code ?? x.id)}||||${String(i.id ?? i.name)}`, country: String(x.name ?? x.code), state: '', isp: String(i.label ?? i.name ?? i.id), protocols: { http: true, socks5: true } }; })]).filter((x) => x.id);
