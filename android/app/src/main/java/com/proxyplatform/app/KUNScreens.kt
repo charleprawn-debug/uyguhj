@@ -390,7 +390,7 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                 }
             } else {
                     item { Text("شراء بروكسي — ${vm.marketplaceProviders.firstOrNull { it.id == vm.selectedMarketplaceProvider }?.name ?: "السيرفر"}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
-                if (vm.purchaseError != null) item { StateCard("تعذر تحميل خيارات الشراء", vm.purchaseError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.closePurchase(); vm.loadPurchaseOptions() }) }
+                if (vm.purchaseError != null) item { StateCard(if (options == null) "تعذر تحميل خيارات الشراء" else "تعذر إتمام العملية", vm.purchaseError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.clearPurchaseError(); if (options == null) { vm.closePurchase(); vm.loadPurchaseOptions() } }) }
                 if (vm.purchaseLoading && options == null) item { StateCard("جارٍ تحميل الدول", "نطلب الخيارات المتاحة من مزود الخدمة.", loading = true) }
                 else if (options != null) {
                     if (options.provider != "ezproxy" && selectedPlan == null) item { SelectionStep("1", "اختر الباقة أو المنتج السكني", options.plans.map { it.name }, null) { name ->

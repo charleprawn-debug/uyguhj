@@ -396,6 +396,7 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
         finally { purchaseLoading = false }
     }
 
+    fun clearPurchaseError() { purchaseError = null }
     fun closePurchase() { purchaseOptions = null; purchaseError = null; purchaseQuote = null; purchasedProxy = null }
 
     fun loadProfile() = viewModelScope.launch {
