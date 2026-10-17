@@ -45,21 +45,35 @@ const list = (value: unknown) => Array.isArray(value) ? value : [];
 const optionObject = (value: unknown): Record<string, unknown> => typeof value === 'string' ? { code: value, id: value, name: value, label: value } : firstObject(value);
 const providerPrice = (body: Record<string, unknown>) => {
   const data = firstObject(body.data);
-  const parsed = Number(data.total ?? data.totalPrice ?? data.total_price ?? body.total ?? body.totalPrice);
+  const parsed = Number(data.finalPrice ?? data.finalPriceInCurrency ?? data.total ?? data.totalPrice ?? data.total_price ?? body.finalPrice ?? body.finalPriceInCurrency ?? body.total ?? body.totalPrice);
   if (!Number.isFinite(parsed) || parsed < 0) throw new Error('المزود لم يرجع سعرًا صالحًا.');
   return money(parsed);
 };
-async function externalProviderOptions(provider: string) {
+const geoLocations = (geo: unknown) => list(geo).flatMap((country) => {
+  const c = optionObject(country); const code = String(c.code ?? c.country ?? '');
+  return [{ id: code, country: String(c.name ?? code), state: '', isp: '', protocols: { http: true, socks5: true } }, ...list(c.regions).flatMap((region) => {
+    const r = optionObject(region);
+    return [{ id: `${code}|${String(r.name ?? r.code ?? '')}`, country: String(c.name ?? code), state: String(r.name ?? r.code ?? ''), isp: '', protocols: { http: true, socks5: true } }, ...list(r.cities).map((city) => { const x = optionObject(city); return { id: `${code}|${String(r.name ?? r.code ?? '')}|${String(x.name ?? x.code ?? '')}`, country: String(c.name ?? code), state: String(r.name ?? r.code ?? ''), isp: String(x.name ?? x.code ?? ''), protocols: { http: true, socks5: true } }; })];
+  })];
+});
+
+async function externalProviderOptions(provider: string, requestedServiceId = '', requestedPlanId = '') {
   if (provider === 'proxy-cheap') {
-    const setup = await proxyCheapService.setup('static-residential-ipv4', 'basic');
-    const countries = list(firstObject(setup).countries).map(optionObject);
-    return { provider, label: 'Proxy-Cheap', protocol: 'http', serviceId: 'static-residential-ipv4', planId: 'basic', plans: [{ id: 'basic', name: 'Basic', duration_hours: 720, price: 0, currency: 'USD' }], locations: countries.map((x) => ({ id: String(x.code ?? x.id ?? x.value ?? ''), country: String(x.name ?? x.label ?? x.code ?? ''), state: '', isp: '', protocols: { http: true, socks5: true } })).filter((x) => x.id), setup };
+    const services = await proxyCheapService.services();
+    const residential = services.find((service) => service.id === (requestedServiceId || 'static-residential-ipv4')) ?? services.find((service) => service.id.includes('residential'));
+    if (!residential) throw new Error('لم يعثر المزود على منتج Residential متاح.');
+    const plans = (residential.plans?.length ? residential.plans : [{ id: '', label: residential.label }]).map((plan) => ({ id: `${residential.id}::${plan.id}`, serviceId: residential.id, providerPlanId: plan.id, name: plan.label, duration_hours: 720, price: 0, currency: 'USD' }));
+    const selectedPlan = requestedPlanId || residential.plans?.[0]?.id || '';
+    const setup = await proxyCheapService.setup(residential.id, selectedPlan);
+    const s = firstObject(setup);
+    const countries = list(s.countries).map(optionObject);
+    const locations = countries.flatMap((x) => [{ id: String(x.code ?? x.id ?? x.value ?? ''), country: String(x.name ?? x.label ?? x.code ?? ''), state: '', isp: '', protocols: { http: true, socks5: true } }, ...list(firstObject(s.regions)[String(x.code ?? x.id ?? '')]).map((region) => { const r = optionObject(region); return { id: `${String(x.code ?? x.id)}|${String(r.id ?? r.name)}`, country: String(x.name ?? x.code), state: String(r.label ?? r.id ?? r.name), isp: '', protocols: { http: true, socks5: true } }; }), ...list(firstObject(s.cities)[String(x.code ?? x.id ?? '')]).map((city) => { const c = optionObject(city); return { id: `${String(x.code ?? x.id)}|||${String(c.id ?? c.name)}`, country: String(x.name ?? x.code), state: String(c.region ?? ''), isp: '', protocols: { http: true, socks5: true } }; }), ...list(firstObject(s.isps)[String(x.code ?? x.id ?? '')]).map((isp) => { const i = optionObject(isp); return { id: `${String(x.code ?? x.id)}||||${String(i.id ?? i.name)}`, country: String(x.name ?? x.code), state: '', isp: String(i.label ?? i.name ?? i.id), protocols: { http: true, socks5: true } }; })]).filter((x) => x.id);
+    return { provider, label: 'Proxy-Cheap Residential', protocol: 'http', serviceId: residential.id, plans, selectedPlanId: selectedPlan, locations, setup };
   }
   if (provider === 'proxy-seller') {
-    const reference = await proxySellerService.reference('isp');
-    const data = firstObject(reference.data); const items = firstObject(data.items);
-    const countries = list(items.country ?? data.country).map(optionObject); const periods = list(items.period ?? data.period).map(optionObject);
-    return { provider, label: 'Proxy-Seller', protocol: 'http', proxyType: 'isp', plans: periods.map((x) => ({ id: String(x.id ?? x.code ?? ''), name: String(x.name ?? x.label ?? x.id ?? ''), duration_hours: 720, price: 0, currency: 'USD' })).filter((x) => x.id), locations: countries.map((x) => ({ id: String(x.id ?? x.code ?? ''), country: String(x.name ?? x.label ?? x.id ?? ''), state: '', isp: '', protocols: { http: true, socks5: true } })).filter((x) => x.id), setup: reference };
+    const [packageInfo, geo] = await Promise.all([proxySellerService.residentialPackage(), proxySellerService.residentialGeo()]);
+    const packageData = firstObject(packageInfo.data);
+    return { provider, label: 'Proxy-Seller Residential', protocol: 'http', residential: true, plans: [{ id: 'current-package', name: `الباقة الحالية — ${(Number(packageData.traffic_left ?? 0) / 1073741824).toFixed(2)} GB متبقية`, duration_hours: 0, price: 0, currency: 'USD' }], locations: geoLocations(geo.data ?? geo), package: packageData, setup: geo };
   }
   return null;
 }
@@ -71,11 +85,13 @@ async function purchaseExternal(req: any, res: any, provider: string) {
   if (!country || !planId) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'اختر الدولة والمدة قبل المتابعة.' } });
   const { data: existing } = await supabaseAdmin.from('marketplace_proxy_orders').select('id,status,amount,provider_proxy_id').eq('client_request_id', requestId).eq('user_id', req.user.id).maybeSingle();
   if (existing?.status === 'completed') { const { data: saved } = await supabaseAdmin.from('user_proxy_credentials').select('*').eq('order_id', existing.id).single(); return res.json({ data: saved ? formatSavedProxy(saved, encryptionService.decrypt(saved.password_encrypted)) : existing }); }
+  const sellerLocation = country.split('|');
+  const cheapLocation = country.split('|');
   const payload: Record<string, unknown> = provider === 'proxy-cheap' ? {
-    planId, quantity: 1, country, region: String(body.region ?? ''), city: String(body.city ?? ''), ispId: String(body.ispId ?? ''), period: { unit: 'months', value: Number(body.periodMonths ?? 1) }, couponCode: '',
-  } : { countryId: country, periodId: planId, paymentId: 'balance', quantity: 1, authorization: '', customTargetName: '', sectionCode: 'isp', generateAuth: 'Y', uptime: false };
+    planId, quantity: 1, country: cheapLocation[0] ?? country, region: cheapLocation[1] || String(body.region ?? ''), city: cheapLocation[2] || String(body.city ?? ''), ispId: cheapLocation[3] || String(body.ispId ?? ''), period: { unit: 'months', value: Number(body.periodMonths ?? 1) }, couponCode: '',
+  } : { title: String(body.title ?? `Proxy Platform ${new Date().toISOString().slice(0, 10)}`).slice(0, 80), whitelist: '', geo: { country: sellerLocation[0] ?? '', region: sellerLocation[1] ?? '', city: sellerLocation[2] ?? '', isp: sellerLocation[3] ?? '' }, export: { ports: Math.min(1000, Math.max(1, Number(body.ports ?? 1))), ext: 'csv' }, rotation: Number(body.rotation ?? -1) };
   let price = 0;
-  try { price = provider === 'proxy-cheap' ? providerPrice(await proxyCheapService.price('static-residential-ipv4', payload)) : providerPrice(await proxySellerService.calculate(payload)); }
+  try { if (provider === 'proxy-cheap') price = providerPrice(await proxyCheapService.price(String(body.serviceId ?? 'static-residential-ipv4'), payload)); }
   catch (error) { return res.status(502).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: error instanceof Error ? error.message : 'تعذر الحصول على السعر من المزود.' } }); }
   const orderId = existing?.id ?? crypto.randomUUID();
   if (!existing) {
@@ -86,10 +102,10 @@ async function purchaseExternal(req: any, res: any, provider: string) {
   const reserve = Array.isArray(reserved) ? reserved[0] : reserved;
   if (reserveError || !reserve?.success) { await supabaseAdmin.from('marketplace_proxy_orders').update({ status: 'failed', error_message: reserve?.message ?? reserveError?.message ?? 'Insufficient wallet balance' }).eq('id', orderId); return res.status(409).json({ error: { code: 'INSUFFICIENT_BALANCE', message: 'رصيد المحفظة غير كافٍ لإتمام الشراء.', data: { balance: reserve?.new_balance ?? null, required: price } } }); }
   try {
-    const result = provider === 'proxy-cheap' ? await proxyCheapService.execute('static-residential-ipv4', { ...payload, autoExtend: { isEnabled: false }, traffic: 1 }) : await proxySellerService.make(payload);
+    const result = provider === 'proxy-cheap' ? await proxyCheapService.execute(String(body.serviceId ?? 'static-residential-ipv4'), { ...payload, autoExtend: { isEnabled: false }, traffic: Number(body.trafficGb ?? 1) }) : await proxySellerService.createResidentialList(payload);
     const data = firstObject(result.data); const providerOrderId = String(data.id ?? data.orderId ?? data.order_id ?? result.id ?? '');
-    if (!providerOrderId) throw new Error('لم يرجع المزود رقم الطلب.');
-    const proxy = provider === 'proxy-cheap' ? await proxyCheapService.waitForProxy(providerOrderId) : await proxySellerService.waitForProxy('isp', providerOrderId);
+    if (!providerOrderId) throw new Error('لم يرجع المزود رقم الطلب/القائمة.');
+    const proxy = provider === 'proxy-cheap' ? await proxyCheapService.waitForProxy(providerOrderId) : { id: providerOrderId, status: 'active', protocol: 'http', host: sellerLocation[0] === 'US' ? 'us.res.proxy-seller.com' : 'res.proxy-seller.com', port: 10000, username: String(data.login ?? ''), password: String(data.password ?? ''), expiresAt: undefined, location: payload.geo as Record<string, unknown> };
     const proxyPassword = proxy.password || password;
     const { error: saveError } = await supabaseAdmin.from('user_proxy_credentials').insert({ user_id: req.user.id, order_id: orderId, provider_proxy_id: String(proxy.id), product_id: null, protocol: proxy.protocol, host: proxy.host, port: proxy.port, username: proxy.username || username, password_encrypted: encryptionService.encrypt(proxyPassword), proxy_url: `${proxy.protocol}://${proxy.username ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxyPassword)}@` : ''}${proxy.host}:${proxy.port}`, expires_at: proxy.expiresAt ?? null, location: proxy.location ?? {} });
     if (saveError) throw saveError;
@@ -115,7 +131,7 @@ router.get('/purchase-options', requireAuth, async (req, res) => {
   const provider = String(req.query.provider ?? 'ezproxy').toLowerCase();
   if (provider !== 'ezproxy') {
     try {
-      const data = await externalProviderOptions(provider);
+      const data = await externalProviderOptions(provider, String(req.query.serviceId ?? ''), String(req.query.planId ?? ''));
       if (!data) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'المزود غير صالح.' } });
       return res.json({ data });
     } catch (providerError) {
@@ -143,6 +159,16 @@ router.get('/:id/purchase-options', requireAuth, async (req, res) => {
   } catch (providerError) {
     return res.status(502).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: providerError instanceof Error ? providerError.message : 'تعذر تحميل خيارات الشراء.' } });
   }
+});
+
+router.post('/purchase-quote', requireAuth, async (req, res) => {
+  const provider = String(req.body?.provider ?? '').toLowerCase();
+  if (provider === 'proxy-seller') return res.json({ data: { provider, price: null, price_available: false, message: 'Proxy-Seller residential API لا يعيد سعر قائمة منفصلًا؛ السعر مرتبط بالباقة الموجودة.' } });
+  if (provider !== 'proxy-cheap') return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'المزود لا يحتاج إلى تسعير خارجي.' } });
+  const countryParts = String(req.body?.locationId ?? req.body?.country ?? '').split('|');
+  const payload = { planId: String(req.body?.planId ?? ''), quantity: 1, country: countryParts[0] ?? '', region: countryParts[1] || '', city: countryParts[2] || '', ispId: countryParts[3] || '', period: { unit: 'months', value: Number(req.body?.periodMonths ?? 1) }, couponCode: '' };
+  try { const price = providerPrice(await proxyCheapService.price(String(req.body?.serviceId ?? 'static-residential-ipv4'), payload)); return res.json({ data: { provider, price, currency: 'USD', price_available: true } }); }
+  catch (error) { return res.status(502).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: error instanceof Error ? error.message : 'تعذر حساب السعر.' } }); }
 });
 
 // Provider-direct checkout. The selected location contains the country, state and ISP.

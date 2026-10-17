@@ -14,12 +14,20 @@ class ProxySellerService {
     try {
       const response = await fetch(this.url(path), { ...init, signal: controller.signal, headers: { Accept: 'application/json', 'Content-Type': 'application/json', ...(init.headers ?? {}) } });
       const body = obj(JSON.parse(await response.text()));
-      const errors = arr(body.errors).map((e) => obj(e).message).filter(Boolean).join('; ');
+      const rawErrors = body.errors;
+      const errors = (Array.isArray(rawErrors) ? rawErrors : Object.values(obj(rawErrors))).flatMap((e) => Array.isArray(e) ? e : [e]).map((e) => typeof e === 'string' ? e : obj(e).message).filter(Boolean).join('; ');
       if (!response.ok || body.status === 'error' || errors) throw new Error(errors || `Proxy-Seller request failed (${response.status})`);
       return body as T;
     } finally { clearTimeout(timer); }
   }
   async reference(type = 'isp'): Promise<Json> { return this.request<Json>(`/reference/list/${encodeURIComponent(type)}`); }
+  async residentialPackage(): Promise<Json> { return this.request<Json>('/resident/package'); }
+  async residentialGeo(): Promise<Json> { return this.request<Json>('/resident/geo'); }
+  async residentialLists(): Promise<Json> { return this.request<Json>('/resident/lists'); }
+  async createResidentialList(payload: Json): Promise<Json> { return this.request<Json>('/resident/list/add', { method: 'POST', body: JSON.stringify(payload) }); }
+  async renameResidentialList(payload: Json): Promise<Json> { return this.request<Json>('/resident/list/rename', { method: 'POST', body: JSON.stringify(payload) }); }
+  async rotateResidentialList(payload: Json): Promise<Json> { return this.request<Json>('/resident/list/rotation', { method: 'POST', body: JSON.stringify(payload) }); }
+  async deleteResidentialList(payload: Json): Promise<Json> { return this.request<Json>('/resident/list/delete', { method: 'DELETE', body: JSON.stringify(payload) }); }
   async calculate(payload: Json): Promise<Json> { return this.request<Json>('/order/calc', { method: 'POST', body: JSON.stringify(payload) }); }
   async make(payload: Json): Promise<Json> { return this.request<Json>('/order/make', { method: 'POST', body: JSON.stringify(payload) }); }
   async proxies(type = 'isp', orderId?: string): Promise<SellerProxy[]> {

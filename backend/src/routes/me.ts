@@ -5,6 +5,8 @@ import { supabaseAdmin } from '../utils/supabase';
 import { encryptionService } from '../utils/encryption';
 import { verifyShamCash, verifySyriatel } from '../services/syriaPayments';
 import { createWhiteLabelPayment, isConfigured as isOxaConfigured } from '../services/oxaPay';
+import { proxyCheapService } from '../services/proxyCheap';
+import { proxySellerService } from '../services/proxySeller';
 
 const router = Router();
 router.use(requireAuth);
@@ -45,8 +47,27 @@ router.get('/proxies', async (req, res) => {
   try {
     return res.json({ data: (data ?? []).map((row) => ({ ...row, password_encrypted: undefined, password: encryptionService.decrypt(row.password_encrypted) })) });
   } catch {
-    return res.status(500).json({ error: { code: 'PROXY_CREDENTIALS_UNAVAILABLE', message: 'Could not decrypt saved proxy credentials' } });
+    return res.status(500).json({ error: { code: 'PROXY_CREDENTIALS_UNAVAILABLE', message: 'Could not decrypt proxy credentials' } });
   }
+});
+
+router.patch('/proxies/:id', async (req, res) => {
+  const action = String(req.body?.action ?? '').trim();
+  const { data: proxy, error: proxyError } = await supabaseAdmin.from('user_proxy_credentials').select('id,order_id,provider_proxy_id,status').eq('id', req.params.id).eq('user_id', req.user!.id).single();
+  if (proxyError || !proxy) return res.status(404).json({ error: { code: 'PROXY_NOT_FOUND', message: 'البروكسي غير موجود.' } });
+  const { data: order, error: orderError } = await supabaseAdmin.from('marketplace_proxy_orders').select('provider_code').eq('id', proxy.order_id).eq('user_id', req.user!.id).single();
+  if (orderError || !order?.provider_code) return res.status(409).json({ error: { code: 'PROVIDER_UNKNOWN', message: 'لا يمكن تحديد مزود البروكسي.' } });
+  try {
+    if (order.provider_code === 'proxy-cheap') await proxyCheapService.proxyAction(String(proxy.provider_proxy_id), action, req.body?.payload ?? {});
+    else if (order.provider_code === 'proxy-seller') {
+      const payload = { ...(req.body?.payload ?? {}), id: Number(proxy.provider_proxy_id) };
+      if (action === 'rename') await proxySellerService.renameResidentialList(payload);
+      else if (action === 'rotation') await proxySellerService.rotateResidentialList(payload);
+      else if (action === 'delete') { await proxySellerService.deleteResidentialList(payload); await supabaseAdmin.from('user_proxy_credentials').update({ status: 'deleted', updated_at: new Date().toISOString() }).eq('id', proxy.id); }
+      else return res.status(400).json({ error: { code: 'UNSUPPORTED_PROXY_ACTION', message: 'هذه العملية غير مدعومة لهذا المزود.' } });
+    } else return res.status(400).json({ error: { code: 'UNSUPPORTED_PROXY_ACTION', message: 'إدارة هذا المزود غير متاحة من API.' } });
+    return res.json({ data: { id: proxy.id, action, status: action === 'delete' ? 'deleted' : proxy.status } });
+  } catch (error) { return res.status(502).json({ error: { code: 'PROXY_ACTION_FAILED', message: error instanceof Error ? error.message : 'تعذر تنفيذ العملية لدى المزود.' } }); }
 });
 
 router.post('/wallet/top-up', async (_req, res) => res.status(409).json({ error: { code: 'TOP_UP_NOT_AVAILABLE', message: 'Wallet top-up methods are not available yet' } }));

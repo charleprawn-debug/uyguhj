@@ -18,7 +18,8 @@ class ProxyCheapService {
       const response = await fetch(`${this.baseUrl}${path}`, { ...init, signal: controller.signal, headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Api-Key': config.proxyCheap.apiKey, 'X-Api-Secret': config.proxyCheap.apiSecret, ...(init.headers ?? {}) } });
       const raw = await response.text();
       const body = raw ? JSON.parse(raw) as unknown : {};
-      if (!response.ok) throw new Error(`Proxy-Cheap request failed (${response.status})`);
+      const errors = asObject(body).errors;
+      if (!response.ok || errors) throw new Error(typeof errors === 'string' ? errors : `Proxy-Cheap request failed (${response.status})`);
       return body as T;
     } finally { clearTimeout(timer); }
   }
@@ -35,6 +36,11 @@ class ProxyCheapService {
   }
   async execute(serviceId: string, payload: Json): Promise<Json> {
     return this.request<Json>(`/order/${encodeURIComponent(serviceId)}/execute`, { method: 'POST', body: JSON.stringify(payload) });
+  }
+  async proxyAction(proxyId: string, action: string, payload: Json = {}): Promise<Json> {
+    const paths: Record<string, { method: string; path: string }> = { 'enable-autoextend': { method: 'POST', path: 'auto-extend/enable' }, 'disable-autoextend': { method: 'POST', path: 'auto-extend/disable' }, 'extend-period': { method: 'POST', path: 'extend-period' }, 'buy-bandwidth': { method: 'POST', path: 'buy-bandwidth' }, 'whitelist-ip': { method: 'POST', path: 'whitelist-ip' }, 'change-protocol': { method: 'POST', path: 'change-protocol' }, 'change-authentication': { method: 'POST', path: 'change-authentication-type' }, rotate: { method: 'POST', path: 'rotate-ip' } };
+    const target = paths[action]; if (!target) throw new Error('Proxy-Cheap action is not supported');
+    return this.request<Json>(`/proxies/${encodeURIComponent(proxyId)}/${target.path}`, { method: target.method, body: JSON.stringify(payload) });
   }
   async proxies(orderId: string): Promise<CheapProxy[]> {
     const body = await this.request<unknown>(`/orders/${encodeURIComponent(orderId)}/proxies`);

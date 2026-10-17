@@ -348,8 +348,9 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
         if (section == "proxies") vm.loadRemoteProxies()
     }
     LaunchedEffect(vm.purchaseOptions) {
-        selectedCountry = null; selectedState = null; selectedProvider = null; selectedPlan = null; review = false
+        selectedCountry = null; selectedState = null; selectedProvider = null; review = false
     }
+    LaunchedEffect(vm.selectedMarketplaceProvider) { selectedCountry = null; selectedState = null; selectedProvider = null; selectedPlan = null; review = false }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
@@ -392,20 +393,27 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                 if (vm.purchaseError != null) item { StateCard("تعذر تحميل خيارات الشراء", vm.purchaseError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.closePurchase(); vm.loadPurchaseOptions() }) }
                 if (vm.purchaseLoading && options == null) item { StateCard("جارٍ تحميل الدول", "نطلب الخيارات المتاحة من مزود الخدمة.", loading = true) }
                 else if (options != null) {
-                    item { SelectionStep("1", "اختر الدولة", countries, selectedCountry) { selectedCountry = it; selectedState = null; selectedProvider = null; review = false } }
-                    if (selectedCountry != null && states.isNotEmpty()) item { SelectionStep("2", "اختر الولاية", states, selectedState) { selectedState = it; selectedProvider = null; review = false } }
-                    if (selectedCountry != null && states.isEmpty()) item { SelectionStep("2", "اختر الموقع المتاح", providers.map { it.provider.ifBlank { it.country } }.distinct(), selectedProvider?.provider ?: selectedProvider?.country) { name -> selectedProvider = providers.firstOrNull { it.provider.ifBlank { it.country } == name }; review = false } }
-                    if (selectedState != null) item { SelectionStep("3", "اختر المزود", providers.map { it.provider.ifBlank { "مزود متاح" } }.distinct(), selectedProvider?.provider) { name -> selectedProvider = providers.firstOrNull { it.provider.ifBlank { "مزود متاح" } == name }; review = false } }
+                    if (options.provider != "ezproxy" && selectedPlan == null) item { SelectionStep("1", "اختر الباقة أو المنتج السكني", options.plans.map { it.name }, null) { name ->
+                        val plan = options.plans.firstOrNull { it.name == name }; selectedPlan = plan; if (options.provider == "proxy-cheap" && plan != null) vm.loadPurchaseOptionsFor(options.provider, plan.serviceId, plan.providerPlanId); review = false
+                    } }
+                    if (options.provider == "ezproxy" || selectedPlan != null) {
+                        item { SelectionStep(if (options.provider == "ezproxy") "1" else "2", "اختر الدولة", countries, selectedCountry) { selectedCountry = it; selectedState = null; selectedProvider = null; review = false } }
+                        if (selectedCountry != null && states.isNotEmpty()) item { SelectionStep(if (options.provider == "ezproxy") "2" else "3", "اختر الولاية", states, selectedState) { selectedState = it; selectedProvider = null; review = false } }
+                        if (selectedCountry != null && states.isEmpty()) item { SelectionStep(if (options.provider == "ezproxy") "2" else "3", "اختر الموقع المتاح", providers.map { it.provider.ifBlank { it.country } }.distinct(), selectedProvider?.provider ?: selectedProvider?.country) { name -> selectedProvider = providers.firstOrNull { it.provider.ifBlank { it.country } == name }; review = false } }
+                        if (selectedState != null) item { SelectionStep("4", "اختر المزود", providers.map { it.provider.ifBlank { "مزود متاح" } }.distinct(), selectedProvider?.provider) { name -> selectedProvider = providers.firstOrNull { it.provider.ifBlank { "مزود متاح" } == name }; review = false } }
+                    }
                     if (selectedProvider != null) item {
                         KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("4. بيانات البروكسي", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text("ستُستخدم هذه البيانات لإنشاء البروكسي لدى المزود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, shape = RoundedCornerShape(15.dp))
-                            OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(15.dp))
-                            Text("5. اختر المدة", fontWeight = FontWeight.Bold)
-                            options.plans.forEach { plan -> FilterChip(selected = selectedPlan?.id == plan.id, onClick = { selectedPlan = plan; review = false }, label = { Text(if (plan.price > 0) "${plan.name} — ${"%.2f".format(Locale.US, plan.price)} دولار" else "${plan.name} — السعر يحسب مباشرة من المزود") }, modifier = Modifier.fillMaxWidth()) }
-                            val ready = username.trim().length >= 3 && password.length >= 6 && selectedPlan != null
-                            Button(onClick = { review = true }, enabled = ready && !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("مراجعة الطلب", fontWeight = FontWeight.Bold) }
+                            Text("البيانات النهائية", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            if (options.provider == "ezproxy") {
+                                Text("ستُستخدم هذه البيانات لإنشاء البروكسي لدى المزود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, shape = RoundedCornerShape(15.dp))
+                                OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(15.dp))
+                            } else Text("سيُصدر المزود بيانات الدخول تلقائيًا بعد إنشاء البروكسي السكني.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (options.provider == "ezproxy") Text("5. اختر المدة", fontWeight = FontWeight.Bold)
+                            if (options.provider == "ezproxy") options.plans.forEach { plan -> FilterChip(selected = selectedPlan?.id == plan.id, onClick = { selectedPlan = plan; review = false }, label = { Text(if (plan.price > 0) "${plan.name} — ${"%.2f".format(Locale.US, plan.price)} دولار" else "${plan.name} — السعر يحسب مباشرة من المزود") }, modifier = Modifier.fillMaxWidth()) }
+                            val ready = (options.provider != "ezproxy" || (username.trim().length >= 3 && password.length >= 6)) && selectedPlan != null
+                            Button(onClick = { review = true; if (selectedPlan != null && selectedProvider != null) vm.loadProxyQuote(options, selectedPlan!!, selectedProvider!!) }, enabled = ready && !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("مراجعة الطلب", fontWeight = FontWeight.Bold) }
                         } }
                     }
                     if (review && selectedProvider != null && selectedPlan != null) item {
@@ -416,8 +424,8 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                             KeyValueRow("الولاية", selectedProvider!!.state)
                             KeyValueRow("المزود", selectedProvider!!.provider)
                             KeyValueRow("المدة", plan.name)
-                            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) { Text(if (plan.price > 0) "الإجمالي: ${"%.2f".format(Locale.US, plan.price)} دولار — رصيدك: ${"%.2f".format(Locale.US, vm.wallet?.balance ?: 0.0)} ${vm.wallet?.currency ?: "USD"}" else "سيتم جلب السعر النهائي من ${vm.marketplaceProviders.firstOrNull { it.id == vm.selectedMarketplaceProvider }?.name ?: "المزود"} عند التأكيد — رصيدك: ${"%.2f".format(Locale.US, vm.wallet?.balance ?: 0.0)} ${vm.wallet?.currency ?: "USD"}", Modifier.fillMaxWidth().padding(12.dp), fontWeight = FontWeight.Bold) }
-                            Button(onClick = { vm.confirmProxyPurchase(options, plan, selectedProvider!!, username.trim(), password) { purchased ->
+                            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) { Text(vm.purchaseQuote?.let { "الإجمالي: ${"%.2f".format(Locale.US, it)} دولار — رصيدك: ${"%.2f".format(Locale.US, vm.wallet?.balance ?: 0.0)} ${vm.wallet?.currency ?: "USD"}" } ?: if (options.provider == "proxy-seller") "لا يعرض Proxy-Seller سعر إنشاء القائمة؛ سيتم استخدام باقتك residential الحالية." else "جارٍ جلب السعر المباشر من المزود…", Modifier.fillMaxWidth().padding(12.dp), fontWeight = FontWeight.Bold) }
+                            Button(onClick = { vm.confirmProxyPurchase(options, plan, selectedProvider!!, if (options.provider == "ezproxy") username.trim() else "", if (options.provider == "ezproxy") password else "") { purchased ->
                                 runCatching { ProxyProfileStore(context.applicationContext).save(SavedProxy(UUID.randomUUID().toString(), "${selectedProvider!!.country} • ${selectedProvider!!.provider}", purchased.protocol, purchased.host, purchased.port, true, purchased.username, purchased.password)) }
                                 section = "proxies"; vm.loadRemoteProxies()
                             } }, enabled = !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp)) {

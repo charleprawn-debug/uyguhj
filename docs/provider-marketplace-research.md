@@ -3,28 +3,19 @@
 ## Proxy-Cheap
 Source: https://docs.proxy-cheap.com/
 
-- Authentication uses `X-Api-Key` and `X-Api-Secret` headers.
-- Base API: `https://api.proxy-cheap.com`.
-- `GET /v2/order` returns services and optional plans.
-- `POST /v2/order/{serviceId}` with `{ "planId": "" }` returns setup options such as countries, regions, cities, and ISPs.
-- `POST /v2/order/{serviceId}/price` prices a configuration. The documented body includes `planId`, `quantity`, `country`, `region`, `city`, `ispId`, `period: { unit, value }`, and `couponCode`.
-- `POST /v2/order/{serviceId}/execute` buys the same configuration and additionally accepts `autoExtend: { isEnabled, traffic }` and `traffic`.
-- `GET /orders/{id}/proxies` returns credentials and connection ports. The response may initially be `PENDING`, so the integration must poll briefly before saving the proxy.
-- Prices can vary by selected location, so the application must calculate the price after the location is selected rather than using constants.
+Proxy-Cheap exposes a residential product through `GET /v2/order`, `POST /v2/order/{serviceId}`, `POST /v2/order/{serviceId}/price`, and `POST /v2/order/{serviceId}/execute`. Authentication uses `X-Api-Key` and `X-Api-Secret`. The residential service is `static-residential-ipv4`, with plans such as `basic`, `standard`, and `premium`. Setup returns `countries` as ISO strings and separate `regions`, `cities`, and `isps` maps. The location values must be sent in the exact fields expected by the selected setup; sending a city or region that is not allowed for that country causes a provider validation error.
 
-## Proxy-Seller API v2
+The price response returns `finalPrice` at the top level, not `data.total`. The execute response returns an order ID, and `GET /orders/{id}/proxies` must be polled until an `ACTIVE` proxy appears. The public API also documents later management operations such as extension, bandwidth purchase, whitelist changes, protocol changes, authentication changes, rotation, and auto-extension.
+
+## Proxy-Seller residential
 Sources:
-- https://docs.proxy-seller.com/api-v2/overview-2
-- https://docs.proxy-seller.com/api-v2/authorization
-- https://docs.proxy-seller.com/api-v2/order-actions
-- https://docs.proxy-seller.com/api-v2/order-actions/complete-information
-- https://docs.proxy-seller.com/api-v2/order-actions/calculate-the-order
-- https://docs.proxy-seller.com/api-v2/order-actions/place-an-order
-- https://docs.proxy-seller.com/api-v2/actions-with-proxies-2
 
-- Base URL: `https://proxy-seller.com/personal/api/v2/{API_KEY}/`; the key is in the URL path.
-- `GET /reference/list/{type}` returns valid country, period, target and carrier identifiers. Supported types include `ipv4`, `ipv6`, `mobile`, `isp`, `resident`, `mix`, and `mix_isp`.
-- `POST /order/calc` is a dry-run price calculation. Common fields include `countryId`, `periodId`, `paymentId: "balance"`, `quantity`, `authorization`, `customTargetName`, and `sectionCode`; protocol is included for IPv6 and mobile variants.
-- `POST /order/make` places the order and charges the provider balance. It returns `orderId`, `total`, and order numbers. API business errors can be returned with HTTP 200 and a populated `errors[]` array, so status alone is insufficient.
-- `GET /proxy/list/{type}?orderId=...` retrieves provisioned proxies. Provisioning can take seconds to a minute, so the integration must poll.
-- Prices are USD and must be fetched from `order/calc`; no application-side price constants should be used.
+- https://docs.proxy-seller.com/api-v2/residential-proxy
+- https://docs.proxy-seller.com/api-v2/residential-proxy/get-package-information
+- https://docs.proxy-seller.com/api-v2/residential-proxy/get-all-locations
+- https://docs.proxy-seller.com/api-v2/residential-proxy/create-list
+- https://docs.proxy-seller.com/api-v1/residential-proxy/connect-and-target-via-login
+
+The current residential API is package/list based. `GET /resident/package` returns the provider package's traffic limit, traffic remaining, expiry, and rotation. `GET /resident/geo` returns the country, region, city, and ISP hierarchy. `POST /resident/list/add` creates a named list inside that existing package with `{title, whitelist, geo, export, rotation}`. The API returns list credentials. Residential connections use `res.proxy-seller.com` (or a region host), port `10000`, and HTTP/SOCKS5; targeting can also be expressed through documented login suffixes.
+
+The public residential section does not document an endpoint that sells selectable GB packages or returns a price for each GB plan. It also does not document a residential purchase/refund flow through `/order/calc` and `/order/make`; those are for the IP-based product types. Therefore the application must not invent residential plan prices. The implemented flow displays the real existing package quota, lets the user select supported GEO and rotation settings, and creates a residential list. Buying or renewing the package remains a provider-dashboard operation unless Proxy-Seller supplies a separate private endpoint.
