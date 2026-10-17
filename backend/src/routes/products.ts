@@ -64,10 +64,10 @@ async function externalProviderOptions(provider: string, requestedServiceId = ''
     const plans = (residential.plans?.length ? residential.plans : [{ id: '', label: residential.label }]).map((plan) => ({ id: `${residential.id}::${plan.id}`, serviceId: residential.id, providerPlanId: plan.id, name: plan.label, duration_hours: 720, price: 0, currency: 'USD' }));
     const selectedPlan = requestedPlanId || residential.plans?.[0]?.id || '';
     let setup: Record<string, unknown>;
-    try { setup = await proxyCheapService.setup(residential.id, requestedPlanId); }
+    try { setup = await proxyCheapService.setup(residential.id, selectedPlan); }
     catch (error) {
-      if (!requestedPlanId) throw error;
-      setup = await proxyCheapService.setup(residential.id, '');
+      if (!requestedPlanId || !residential.plans?.[0]?.id || requestedPlanId === residential.plans[0].id) throw error;
+      setup = await proxyCheapService.setup(residential.id, residential.plans[0].id);
     }
     const s = firstObject(setup);
     const countries = list(s.countries).map(optionObject);

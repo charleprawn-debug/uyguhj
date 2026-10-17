@@ -12,7 +12,7 @@ const providerErrorMessage = (value: unknown): string => {
   if (Array.isArray(value)) return value.map(providerErrorMessage).filter(Boolean).join('; ');
   if (value && typeof value === 'object') {
     const item = value as Record<string, unknown>;
-    const messages = [item.message, item.detail, item.code, item.parameters].map(providerErrorMessage).filter(Boolean);
+    const messages = [item.message, item.detail, item.code, item.parameters, ...Object.values(item)].map(providerErrorMessage).filter(Boolean);
     return messages.join(' ');
   }
   return '';
