@@ -9,11 +9,11 @@ const asObject = (value: unknown): Json => value && typeof value === 'object' ? 
 const asArray = (value: unknown) => Array.isArray(value) ? value : [];
 const providerErrorMessage = (value: unknown): string => {
   if (typeof value === 'string') return value;
-  if (Array.isArray(value)) return value.map(providerErrorMessage).filter(Boolean).join('; ');
+  if (Array.isArray(value)) return [...new Set(value.map(providerErrorMessage).filter(Boolean))].join('; ');
   if (value && typeof value === 'object') {
     const item = value as Record<string, unknown>;
-    const messages = [item.message, item.detail, item.code, item.parameters, ...Object.values(item)].map(providerErrorMessage).filter(Boolean);
-    return messages.join(' ');
+    const messages = [item.code, item.message, item.detail, item.title, item.parameters, ...Object.values(item)].map(providerErrorMessage).filter(Boolean);
+    return [...new Set(messages)].join(' ');
   }
   return '';
 };
