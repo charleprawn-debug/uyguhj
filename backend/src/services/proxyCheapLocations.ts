@@ -199,3 +199,74 @@ export function buildProxyCheapOrderPayload(input: {
     couponCode: '',
   };
 }
+
+/**
+ * Proxy-Cheap plans are sent as `planId` (e.g. "basic"). Older clients may send
+ * the composite marketplace id "static-residential-ipv4::basic".
+ */
+export const normalizeProxyCheapPlanId = (value: unknown): string => {
+  const raw = String(value ?? '').trim();
+  const separator = raw.lastIndexOf('::');
+  return separator >= 0 ? raw.slice(separator + 2).trim() : raw;
+};
+
+const PROXY_CHEAP_LOCATION_ERRORS: Record<string, string> = {
+  NO_SUCH_COUNTRY: 'الدولة المختارة غير متاحة لهذه الباقة.',
+  NO_SUCH_REGION: 'الولاية المختارة غير متاحة لهذه الباقة.',
+  NO_SUCH_CITY: 'المدينة المختارة غير متاحة لهذه الباقة أو لا تتبع الولاية المختارة.',
+  NO_SUCH_ISP: 'المزود المختار غير متاح في هذا الموقع لهذه الباقة.',
+  NOT_ALLOWED: 'هذا المنتج لا يدعم تحديد هذا النوع من المواقع.',
+};
+
+export class ProxyCheapLocationError extends Error {
+  constructor(public readonly code: keyof typeof PROXY_CHEAP_LOCATION_ERRORS | string) {
+    super(PROXY_CHEAP_LOCATION_ERRORS[code] ?? 'الموقع المختار غير متاح لدى المزود.');
+    this.name = 'ProxyCheapLocationError';
+  }
+}
+
+/** Converts raw provider error text such as "NO_SUCH_REGION Virginia" into a clear Arabic message. */
+export const friendlyProxyCheapError = (message: string): string => {
+  const code = Object.keys(PROXY_CHEAP_LOCATION_ERRORS).find((key) => message.includes(key));
+  if (code) return `${PROXY_CHEAP_LOCATION_ERRORS[code]} أعد اختيار الموقع ثم حاول مرة أخرى.`;
+  return message;
+};
+
+const idsOf = (values: unknown): Set<string> =>
+  new Set(array(values).map((value) => optionText(value)).filter(Boolean));
+
+/**
+ * Validates a location against the setup returned for the SAME service + plan,
+ * following the documented Proxy-Cheap rules:
+ *  - country must be in `countries`
+ *  - region must be an id in `regions[country]`
+ *  - city must be an id in `cities[country]` and belong to `region` when sent
+ *  - ispId must be in `isps[country]` and, when a city (or only a region) is
+ *    sent, listed in that city's (or region's) `isps`.
+ */
+export function validateProxyCheapLocation(setup: JsonObject, location: ProxyCheapLocation): void {
+  const { country, region, city, ispId } = location;
+  if (!country || !idsOf(setup.countries).has(country)) throw new ProxyCheapLocationError('NO_SUCH_COUNTRY');
+
+  const regions = array(object(setup.regions)[country]).map(optionObject);
+  const cities = array(object(setup.cities)[country]).map(optionObject);
+  const regionEntry = region ? regions.find((entry) => optionText(entry) === region || firstText(entry.id) === region) : undefined;
+  if (region && !regionEntry) throw new ProxyCheapLocationError('NO_SUCH_REGION');
+
+  const cityEntry = city ? cities.find((entry) => firstText(entry.id, entry.code, entry.name, entry.label) === city) : undefined;
+  if (city && !cityEntry) throw new ProxyCheapLocationError('NO_SUCH_CITY');
+  if (cityEntry && region) {
+    const cityRegion = firstText(cityEntry.region, cityEntry.regionCode, cityEntry.region_code, cityEntry.regionId, cityEntry.state);
+    if (cityRegion && cityRegion !== region && cityRegion !== firstText(regionEntry?.label, regionEntry?.name)) throw new ProxyCheapLocationError('NO_SUCH_CITY');
+  }
+
+  if (ispId) {
+    const countryIsps = idsOf(array(object(setup.isps)[country]).map((value) => {
+      const isp = optionObject(value);
+      return firstText(isp.id, isp.ispId, isp.isp_id, isp.code, isp.value, isp.name);
+    }));
+    if (!countryIsps.has(ispId)) throw new ProxyCheapLocationError('NO_SUCH_ISP');
+    const scope = cityEntry ?? regionEntry;
+    if (scope && Array.isArray(scope.isps) && !idsOf(scope.isps).has(ispId)) throw new ProxyCheapLocationError('NO_SUCH_ISP');
+  }
+}
