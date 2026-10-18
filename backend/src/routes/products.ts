@@ -6,6 +6,7 @@ import { ezProxyService } from '../services/ezProxy';
 import { proxyCheapService } from '../services/proxyCheap';
 import { proxySellerService } from '../services/proxySeller';
 import { encryptionService } from '../utils/encryption';
+import { buildProxyCheapLocations, buildProxyCheapOrderPayload } from '../services/proxyCheapLocations';
 
 const router = Router();
 const money = (value: string | number) => {
@@ -42,21 +43,6 @@ const providerCatalog = [
 const firstObject = (value: unknown): Record<string, unknown> => value && typeof value === 'object' ? value as Record<string, unknown> : {};
 const list = (value: unknown) => Array.isArray(value) ? value : [];
 const optionObject = (value: unknown): Record<string, unknown> => typeof value === 'string' ? { code: value, id: value, name: value, label: value } : firstObject(value);
-type CheapLocation = { country: string; region: string; city: string; ispId: string };
-const cheapLocationId = (location: CheapLocation) => `geo:${Buffer.from(JSON.stringify(location), 'utf8').toString('base64url')}`;
-const parseCheapLocation = (value: unknown): CheapLocation => {
-  const raw = String(value ?? '');
-  if (raw.startsWith('geo:')) {
-    try {
-      const parsed = JSON.parse(Buffer.from(raw.slice(4), 'base64url').toString('utf8')) as Partial<CheapLocation>;
-      return { country: String(parsed.country ?? ''), region: String(parsed.region ?? ''), city: String(parsed.city ?? ''), ispId: String(parsed.ispId ?? '') };
-    } catch { /* Fall through to legacy IDs for old app versions. */ }
-  }
-  const parts = raw.split('|');
-  if (parts.length >= 5) return { country: parts[0] ?? '', region: parts[1] ?? '', city: parts[2] ?? '', ispId: parts[4] ?? parts[3] ?? '' };
-  if (parts.length === 4 && !parts[1] && !parts[2]) return { country: parts[0] ?? '', region: '', city: parts[3] ?? '', ispId: '' };
-  return { country: parts[0] ?? '', region: parts[1] ?? '', city: parts[2] ?? '', ispId: parts[3] ?? '' };
-};
 const providerPrice = (body: Record<string, unknown>) => {
   const data = firstObject(body.data);
   const parsed = Number(data.finalPrice ?? data.finalPriceInCurrency ?? data.total ?? data.totalPrice ?? data.total_price ?? body.finalPrice ?? body.finalPriceInCurrency ?? body.total ?? body.totalPrice);
@@ -85,24 +71,7 @@ async function externalProviderOptions(provider: string, requestedServiceId = ''
       setup = await proxyCheapService.setup(residential.id, residential.plans[0].id);
     }
     const s = firstObject(setup);
-    const countries = list(s.countries).map(optionObject);
-    const locations = countries.flatMap((x) => {
-      const country = String(x.code ?? x.id ?? x.value ?? ''); const countryName = String(x.name ?? x.label ?? x.code ?? '');
-      const ispLabels = new Map(list(firstObject(s.isps)[country]).map((isp) => { const i = optionObject(isp); return [String(i.id ?? i.name ?? ''), String(i.label ?? i.name ?? i.id ?? '')] as const; }));
-      const ispChoices = (value: unknown, fallbackLabel: string) => {
-        const ids = list(value).map((isp) => { const i = optionObject(isp); return { id: String(i.id ?? i.name ?? ''), label: String(i.label ?? i.name ?? i.id ?? fallbackLabel) }; }).filter((isp) => isp.id);
-        const choices = ids.map((isp) => ({ ...isp, label: ispLabels.get(isp.id) ?? isp.label }));
-        return choices.length ? choices : [{ id: '', label: fallbackLabel }];
-      };
-      const countryCities = list(firstObject(s.cities)[country]).map(optionObject);
-      const regionsWithCities = new Set(countryCities.map((city) => String(city.region ?? '')).filter(Boolean));
-      return [
-        { id: cheapLocationId({ country, region: '', city: '', ispId: '' }), country: countryName, state: '', isp: '', protocols: { http: true, socks5: true } },
-        ...list(firstObject(s.regions)[country]).flatMap((region) => { const r = optionObject(region); const state = String(r.label ?? r.id ?? r.name ?? ''); if (regionsWithCities.has(state)) return []; return ispChoices(r.isps, `الولاية مباشرة`).map((isp) => ({ id: cheapLocationId({ country, region: state, city: '', ispId: isp.id }), country: countryName, state, isp: isp.label, protocols: { http: true, socks5: true } })); }),
-        ...countryCities.flatMap((c) => { const cityName = String(c.id ?? c.name ?? ''); const state = String(c.region ?? ''); return ispChoices(c.isps, cityName).map((isp) => ({ id: cheapLocationId({ country, region: state, city: cityName, ispId: isp.id }), country: countryName, state, isp: `${cityName} • ${isp.label}`, protocols: { http: true, socks5: true } })); }),
-        ...list(firstObject(s.isps)[country]).map((isp) => { const i = optionObject(isp); const ispId = String(i.id ?? i.name ?? ''); return { id: cheapLocationId({ country, region: '', city: '', ispId }), country: countryName, state: '', isp: String(i.label ?? i.name ?? i.id), protocols: { http: true, socks5: true } }; }),
-      ];
-    }).filter((x) => x.id);
+    const locations = buildProxyCheapLocations(s);
     return { provider, label: 'Proxy-Cheap Residential', protocol: 'http', serviceId: residential.id, plans, selectedPlanId: selectedPlan, locations, setup };
   }
   if (provider === 'proxy-seller') {
@@ -121,9 +90,8 @@ async function purchaseExternal(req: any, res: any, provider: string) {
   const { data: existing } = await supabaseAdmin.from('marketplace_proxy_orders').select('id,status,amount,provider_proxy_id').eq('client_request_id', requestId).eq('user_id', req.user.id).maybeSingle();
   if (existing?.status === 'completed') { const { data: saved } = await supabaseAdmin.from('user_proxy_credentials').select('*').eq('order_id', existing.id).single(); return res.json({ data: saved ? formatSavedProxy(saved, encryptionService.decrypt(saved.password_encrypted)) : existing }); }
   const sellerLocation = country.split('|');
-  const cheapLocation = parseCheapLocation(country);
   const payload: Record<string, unknown> = provider === 'proxy-cheap' ? {
-    planId, quantity: 1, country: cheapLocation.country || String(body.country ?? ''), region: cheapLocation.region || String(body.region ?? ''), city: cheapLocation.city || String(body.city ?? ''), ispId: cheapLocation.ispId || String(body.ispId ?? ''), period: { unit: 'months', value: Number(body.periodMonths ?? 1) }, couponCode: '',
+    ...buildProxyCheapOrderPayload({ locationId: body.locationId ?? country, country: body.country, planId, periodMonths: body.periodMonths }),
   } : { title: String(body.title ?? `Proxy Platform ${new Date().toISOString().slice(0, 10)}`).slice(0, 80), whitelist: '', geo: { country: sellerLocation[0] ?? '', region: sellerLocation[1] ?? '', city: sellerLocation[2] ?? '', isp: sellerLocation[3] ?? '' }, export: { ports: Math.min(1000, Math.max(1, Number(body.ports ?? 1))), ext: 'csv' }, rotation: Number(body.rotation ?? -1) };
   let price = 0;
   try { if (provider === 'proxy-cheap') price = providerPrice(await proxyCheapService.price(String(body.serviceId ?? 'static-residential-ipv4'), payload)); }
@@ -200,8 +168,7 @@ router.post('/purchase-quote', requireAuth, async (req, res) => {
   const provider = String(req.body?.provider ?? '').toLowerCase();
   if (provider === 'proxy-seller') return res.json({ data: { provider, price: null, price_available: false, message: 'Proxy-Seller residential API لا يعيد سعر قائمة منفصلًا؛ السعر مرتبط بالباقة الموجودة.' } });
   if (provider !== 'proxy-cheap') return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'المزود لا يحتاج إلى تسعير خارجي.' } });
-  const location = parseCheapLocation(req.body?.locationId ?? req.body?.country);
-  const payload = { planId: String(req.body?.planId ?? ''), quantity: 1, country: location.country, region: location.region, city: location.city, ispId: location.ispId, period: { unit: 'months', value: Number(req.body?.periodMonths ?? 1) }, couponCode: '' };
+  const payload = buildProxyCheapOrderPayload(req.body ?? {});
   try { const price = providerPrice(await proxyCheapService.price(String(req.body?.serviceId ?? 'static-residential-ipv4'), payload)); return res.json({ data: { provider, price, currency: 'USD', price_available: true } }); }
   catch (error) { return res.status(502).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: error instanceof Error ? error.message : 'تعذر حساب السعر.' } }); }
 });
