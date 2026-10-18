@@ -57,17 +57,25 @@ class ProxyCheapService {
     const body = await this.request<unknown>(`/orders/${encodeURIComponent(orderId)}/proxies`);
     return asArray(body).map((item) => {
       const x = asObject(item); const auth = asObject(x.authentication); const connection = asObject(x.connection);
-      const protocol = String(x.proxyType ?? 'HTTP').toLowerCase();
-      const port = Number(connection.socks5Port ?? connection.httpsPort ?? connection.httpPort);
+      const requestedType = String(x.proxyType ?? 'HTTP').toUpperCase();
+      const availablePorts = [
+        { type: 'SOCKS5', port: Number(connection.socks5Port) },
+        { type: 'HTTPS', port: Number(connection.httpsPort) },
+        { type: 'HTTP', port: Number(connection.httpPort) },
+      ];
+      const selectedPort = availablePorts.find((candidate) => candidate.type === requestedType && Number.isInteger(candidate.port) && candidate.port > 0)
+        ?? availablePorts.find((candidate) => Number.isInteger(candidate.port) && candidate.port > 0);
+      const protocol = (selectedPort?.type ?? requestedType).toLowerCase();
+      const port = selectedPort?.port ?? Number.NaN;
       return { id: String(x.id ?? ''), status: String(x.status ?? ''), protocol, host: String(connection.connectIp ?? connection.publicIp ?? ''), port, username: String(auth.username ?? ''), password: String(auth.password ?? ''), expiresAt: typeof x.expiresAt === 'string' ? x.expiresAt : undefined, location: asObject(x.metadata) };
     }).filter((x) => x.id && x.host && Number.isInteger(x.port) && x.port > 0);
   }
   async waitForProxy(orderId: string): Promise<CheapProxy> {
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const proxies = await this.proxies(orderId);
-      const proxy = proxies.find((x) => ['ACTIVE', 'active'].includes(x.status)) ?? proxies[0];
+      const proxy = proxies.find((x) => x.status.toUpperCase() === 'ACTIVE');
       if (proxy) return proxy;
-      await new Promise((resolve) => setTimeout(resolve, 2500));
+      if (attempt < 11) await new Promise((resolve) => setTimeout(resolve, 2500));
     }
     throw new Error('Proxy-Cheap order is still provisioning');
   }
