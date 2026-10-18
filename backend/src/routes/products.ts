@@ -94,10 +94,12 @@ async function externalProviderOptions(provider: string, requestedServiceId = ''
         const choices = ids.map((isp) => ({ ...isp, label: ispLabels.get(isp.id) ?? isp.label }));
         return choices.length ? choices : [{ id: '', label: fallbackLabel }];
       };
+      const countryCities = list(firstObject(s.cities)[country]).map(optionObject);
+      const regionsWithCities = new Set(countryCities.map((city) => String(city.region ?? '')).filter(Boolean));
       return [
         { id: cheapLocationId({ country, region: '', city: '', ispId: '' }), country: countryName, state: '', isp: '', protocols: { http: true, socks5: true } },
-        ...list(firstObject(s.regions)[country]).flatMap((region) => { const r = optionObject(region); const state = String(r.label ?? r.id ?? r.name ?? ''); return ispChoices(r.isps, `الولاية مباشرة`).map((isp) => ({ id: cheapLocationId({ country, region: state, city: '', ispId: isp.id }), country: countryName, state, isp: isp.label, protocols: { http: true, socks5: true } })); }),
-        ...list(firstObject(s.cities)[country]).flatMap((city) => { const c = optionObject(city); const cityName = String(c.id ?? c.name ?? ''); const state = String(c.region ?? ''); return ispChoices(c.isps, cityName).map((isp) => ({ id: cheapLocationId({ country, region: state, city: cityName, ispId: isp.id }), country: countryName, state, isp: `${cityName} • ${isp.label}`, protocols: { http: true, socks5: true } })); }),
+        ...list(firstObject(s.regions)[country]).flatMap((region) => { const r = optionObject(region); const state = String(r.label ?? r.id ?? r.name ?? ''); if (regionsWithCities.has(state)) return []; return ispChoices(r.isps, `الولاية مباشرة`).map((isp) => ({ id: cheapLocationId({ country, region: state, city: '', ispId: isp.id }), country: countryName, state, isp: isp.label, protocols: { http: true, socks5: true } })); }),
+        ...countryCities.flatMap((c) => { const cityName = String(c.id ?? c.name ?? ''); const state = String(c.region ?? ''); return ispChoices(c.isps, cityName).map((isp) => ({ id: cheapLocationId({ country, region: state, city: cityName, ispId: isp.id }), country: countryName, state, isp: `${cityName} • ${isp.label}`, protocols: { http: true, socks5: true } })); }),
         ...list(firstObject(s.isps)[country]).map((isp) => { const i = optionObject(isp); const ispId = String(i.id ?? i.name ?? ''); return { id: cheapLocationId({ country, region: '', city: '', ispId }), country: countryName, state: '', isp: String(i.label ?? i.name ?? i.id), protocols: { http: true, socks5: true } }; }),
       ];
     }).filter((x) => x.id);
