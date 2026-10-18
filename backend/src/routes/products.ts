@@ -6,7 +6,7 @@ import { ezProxyService } from '../services/ezProxy';
 import { proxyCheapService } from '../services/proxyCheap';
 import { proxySellerService } from '../services/proxySeller';
 import { encryptionService } from '../utils/encryption';
-import { buildProxyCheapLocations, buildProxyCheapOrderPayload } from '../services/proxyCheapLocations';
+import { buildProxyCheapLocations, buildProxyCheapOrderPayload, friendlyProxyCheapError, normalizeProxyCheapPlanId, parseProxyCheapLocation, ProxyCheapLocationError, validateProxyCheapLocation } from '../services/proxyCheapLocations';
 
 const router = Router();
 const money = (value: string | number) => {
@@ -63,13 +63,15 @@ async function externalProviderOptions(provider: string, requestedServiceId = ''
     const residential = services.find((service) => service.id === (requestedServiceId || 'static-residential-ipv4'));
     if (!residential || residential.id !== 'static-residential-ipv4') throw new Error('منتج Static Residential IPv4 غير متاح في حساب Proxy-Cheap حاليًا.');
     const plans = (residential.plans?.length ? residential.plans : [{ id: '', label: residential.label }]).map((plan) => ({ id: `${residential.id}::${plan.id}`, serviceId: residential.id, providerPlanId: plan.id, name: plan.label, duration_hours: 720, price: 0, currency: 'USD' }));
-    const selectedPlan = requestedPlanId || residential.plans?.[0]?.id || '';
-    let setup: Record<string, unknown>;
-    try { setup = await proxyCheapService.setup(residential.id, selectedPlan); }
-    catch (error) {
-      if (!requestedPlanId || !residential.plans?.[0]?.id || requestedPlanId === residential.plans[0].id) throw error;
-      setup = await proxyCheapService.setup(residential.id, residential.plans[0].id);
-    }
+    // The location catalog (countries / regions / cities / ISPs) is plan specific.
+    // Always load it for the exact plan the user selected, and never silently fall
+    // back to another plan: that would return locations that the selected plan rejects
+    // (NO_SUCH_REGION / NO_SUCH_CITY / NO_SUCH_ISP).
+    const requested = normalizeProxyCheapPlanId(requestedPlanId);
+    const knownPlanIds = (residential.plans ?? []).map((plan) => plan.id).filter(Boolean);
+    if (requested && knownPlanIds.length && !knownPlanIds.includes(requested)) throw new Error('الباقة المختارة غير متاحة لدى المزود حاليًا.');
+    const selectedPlan = requested || knownPlanIds[0] || '';
+    const setup = await proxyCheapService.setup(residential.id, selectedPlan);
     const s = firstObject(setup);
     const locations = buildProxyCheapLocations(s);
     return { provider, label: 'Proxy-Cheap Residential', protocol: 'http', serviceId: residential.id, plans, selectedPlanId: selectedPlan, locations, setup };
@@ -82,6 +84,24 @@ async function externalProviderOptions(provider: string, requestedServiceId = ''
   return null;
 }
 
+/**
+ * Builds the Proxy-Cheap price/execute payload and validates the selected location
+ * against the setup of the SAME service + plan, so quote and checkout never send a
+ * location that belongs to another plan.
+ */
+async function resolveProxyCheapPayload(body: Record<string, unknown>) {
+  const serviceId = String(body.serviceId || 'static-residential-ipv4');
+  const planId = normalizeProxyCheapPlanId(body.planId);
+  const locationId = body.locationId ?? body.country;
+  const setup = firstObject(await proxyCheapService.setup(serviceId, planId));
+  validateProxyCheapLocation(setup, parseProxyCheapLocation(locationId));
+  return { serviceId, payload: buildProxyCheapOrderPayload({ locationId, planId, periodMonths: body.periodMonths }) };
+}
+const proxyCheapFailure = (error: unknown, fallback: string) => {
+  if (error instanceof ProxyCheapLocationError) return { status: 422, code: 'LOCATION_NOT_AVAILABLE', message: `${error.message} أعد اختيار الموقع ثم حاول مرة أخرى.` };
+  return { status: 502, code: 'PROVIDER_UNAVAILABLE', message: error instanceof Error ? friendlyProxyCheapError(error.message) : fallback };
+};
+
 async function purchaseExternal(req: any, res: any, provider: string) {
   const body = firstObject(req.body); const requestId = typeof body.clientRequestId === 'string' && body.clientRequestId ? body.clientRequestId : crypto.randomUUID();
   const username = typeof body.username === 'string' ? body.username : ''; const password = typeof body.password === 'string' ? body.password : '';
@@ -90,12 +110,15 @@ async function purchaseExternal(req: any, res: any, provider: string) {
   const { data: existing } = await supabaseAdmin.from('marketplace_proxy_orders').select('id,status,amount,provider_proxy_id').eq('client_request_id', requestId).eq('user_id', req.user.id).maybeSingle();
   if (existing?.status === 'completed') { const { data: saved } = await supabaseAdmin.from('user_proxy_credentials').select('*').eq('order_id', existing.id).single(); return res.json({ data: saved ? formatSavedProxy(saved, encryptionService.decrypt(saved.password_encrypted)) : existing }); }
   const sellerLocation = country.split('|');
-  const payload: Record<string, unknown> = provider === 'proxy-cheap' ? {
-    ...buildProxyCheapOrderPayload({ locationId: body.locationId ?? country, country: body.country, planId, periodMonths: body.periodMonths }),
-  } : { title: String(body.title ?? `Proxy Platform ${new Date().toISOString().slice(0, 10)}`).slice(0, 80), whitelist: '', geo: { country: sellerLocation[0] ?? '', region: sellerLocation[1] ?? '', city: sellerLocation[2] ?? '', isp: sellerLocation[3] ?? '' }, export: { ports: Math.min(1000, Math.max(1, Number(body.ports ?? 1))), ext: 'csv' }, rotation: Number(body.rotation ?? -1) };
+  let proxyCheapServiceId = 'static-residential-ipv4';
+  let payload: Record<string, unknown>;
+  if (provider === 'proxy-cheap') {
+    try { const resolved = await resolveProxyCheapPayload({ ...body, locationId: body.locationId ?? country, planId }); proxyCheapServiceId = resolved.serviceId; payload = resolved.payload; }
+    catch (error) { const failure = proxyCheapFailure(error, 'تعذر التحقق من الموقع لدى المزود.'); return res.status(failure.status).json({ error: { code: failure.code, message: failure.message } }); }
+  } else payload = { title: String(body.title ?? `Proxy Platform ${new Date().toISOString().slice(0, 10)}`).slice(0, 80), whitelist: '', geo: { country: sellerLocation[0] ?? '', region: sellerLocation[1] ?? '', city: sellerLocation[2] ?? '', isp: sellerLocation[3] ?? '' }, export: { ports: Math.min(1000, Math.max(1, Number(body.ports ?? 1))), ext: 'csv' }, rotation: Number(body.rotation ?? -1) };
   let price = 0;
-  try { if (provider === 'proxy-cheap') price = providerPrice(await proxyCheapService.price(String(body.serviceId ?? 'static-residential-ipv4'), payload)); }
-  catch (error) { return res.status(502).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: error instanceof Error ? error.message : 'تعذر الحصول على السعر من المزود.' } }); }
+  try { if (provider === 'proxy-cheap') price = providerPrice(await proxyCheapService.price(proxyCheapServiceId, payload)); }
+  catch (error) { const failure = proxyCheapFailure(error, 'تعذر الحصول على السعر من المزود.'); return res.status(failure.status).json({ error: { code: failure.code, message: failure.message } }); }
   const orderId = existing?.id ?? crypto.randomUUID();
   if (!existing) {
     const { error } = await supabaseAdmin.from('marketplace_proxy_orders').insert({ id: orderId, user_id: req.user.id, product_id: null, provider_code: provider, client_request_id: requestId, status: 'pending', protocol: String(body.protocol ?? 'http').toLowerCase(), plan_id: 0, location_id: 0, amount: price, metadata: { source: 'external_provider', provider, request: payload } });
@@ -105,7 +128,7 @@ async function purchaseExternal(req: any, res: any, provider: string) {
   const reserve = Array.isArray(reserved) ? reserved[0] : reserved;
   if (reserveError || !reserve?.success) { await supabaseAdmin.from('marketplace_proxy_orders').update({ status: 'failed', error_message: reserve?.message ?? reserveError?.message ?? 'Insufficient wallet balance' }).eq('id', orderId); return res.status(409).json({ error: { code: 'INSUFFICIENT_BALANCE', message: 'رصيد المحفظة غير كافٍ لإتمام الشراء.', data: { balance: reserve?.new_balance ?? null, required: price } } }); }
   try {
-    const result = provider === 'proxy-cheap' ? await proxyCheapService.execute(String(body.serviceId ?? 'static-residential-ipv4'), { ...payload, autoExtend: { isEnabled: false }, traffic: Number(body.trafficGb ?? 1) }) : await proxySellerService.createResidentialList(payload);
+    const result = provider === 'proxy-cheap' ? await proxyCheapService.execute(proxyCheapServiceId, { ...payload, autoExtend: { isEnabled: false }, traffic: Number(body.trafficGb ?? 1) }) : await proxySellerService.createResidentialList(payload);
     const data = firstObject(result.data); const providerOrderId = String(data.id ?? data.orderId ?? data.order_id ?? result.id ?? '');
     if (!providerOrderId) throw new Error('لم يرجع المزود رقم الطلب/القائمة.');
     const proxy = provider === 'proxy-cheap' ? await proxyCheapService.waitForProxy(providerOrderId) : { id: providerOrderId, status: 'active', protocol: 'http', host: sellerLocation[0] === 'US' ? 'us.res.proxy-seller.com' : 'res.proxy-seller.com', port: 10000, username: String(data.login ?? ''), password: String(data.password ?? ''), expiresAt: undefined, location: payload.geo as Record<string, unknown> };
@@ -168,9 +191,11 @@ router.post('/purchase-quote', requireAuth, async (req, res) => {
   const provider = String(req.body?.provider ?? '').toLowerCase();
   if (provider === 'proxy-seller') return res.json({ data: { provider, price: null, price_available: false, message: 'Proxy-Seller residential API لا يعيد سعر قائمة منفصلًا؛ السعر مرتبط بالباقة الموجودة.' } });
   if (provider !== 'proxy-cheap') return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'المزود لا يحتاج إلى تسعير خارجي.' } });
-  const payload = buildProxyCheapOrderPayload(req.body ?? {});
-  try { const price = providerPrice(await proxyCheapService.price(String(req.body?.serviceId ?? 'static-residential-ipv4'), payload)); return res.json({ data: { provider, price, currency: 'USD', price_available: true } }); }
-  catch (error) { return res.status(502).json({ error: { code: 'PROVIDER_UNAVAILABLE', message: error instanceof Error ? error.message : 'تعذر حساب السعر.' } }); }
+  try {
+    const { serviceId, payload } = await resolveProxyCheapPayload(firstObject(req.body));
+    const price = providerPrice(await proxyCheapService.price(serviceId, payload));
+    return res.json({ data: { provider, price, currency: 'USD', price_available: true } });
+  } catch (error) { const failure = proxyCheapFailure(error, 'تعذر حساب السعر.'); return res.status(failure.status).json({ error: { code: failure.code, message: failure.message } }); }
 });
 
 // Provider-direct checkout. The selected location contains the country, state and ISP.
