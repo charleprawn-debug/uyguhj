@@ -20,20 +20,20 @@ describe('Proxy-Cheap provider location mapping', () => {
     },
   };
 
-  it('keeps the human-readable region label separate from the provider region code', () => {
+  it('sends the provider region id while keeping the human-readable label for UI', () => {
     const locations = buildProxyCheapLocations(setup);
     const ashburn = locations.find((location) => location.state === 'Virginia' && location.isp.startsWith('Ashburn •'));
 
     expect(ashburn).toBeDefined();
     expect(parseProxyCheapLocation(ashburn?.id)).toEqual({
       country: 'US',
-      region: 'VA',
+      region: 'Virginia',
       city: 'ashburn-va',
       ispId: 'isp-17',
     });
   });
 
-  it('resolves a city region label to the provider code and shares the same payload for quote and checkout', () => {
+  it('shares the same exact location payload for quote and checkout', () => {
     const location = buildProxyCheapLocations(setup).find((candidate) => candidate.state === 'Virginia' && candidate.isp.startsWith('Ashburn •'));
     const quotePayload = buildProxyCheapOrderPayload({ locationId: location?.id, planId: 'basic', periodMonths: 1 });
     const checkoutPayload = buildProxyCheapOrderPayload({ locationId: location?.id, planId: 'basic', periodMonths: 1 });
@@ -41,10 +41,15 @@ describe('Proxy-Cheap provider location mapping', () => {
     expect(quotePayload).toEqual(checkoutPayload);
     expect(quotePayload).toMatchObject({
       country: 'US',
-      region: 'VA',
+      region: 'Virginia',
       city: 'ashburn-va',
       ispId: 'isp-17',
     });
+  });
+
+  it('omits empty optional location fields from provider payloads', () => {
+    const payload = buildProxyCheapOrderPayload({ country: 'DE', planId: 'basic' });
+    expect(payload).toEqual({ planId: 'basic', quantity: 1, period: { unit: 'months', value: 1 }, country: 'DE' });
   });
 
   it('continues to parse legacy pipe-delimited location IDs', () => {

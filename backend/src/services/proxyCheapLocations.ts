@@ -83,9 +83,9 @@ export function buildProxyCheapLocations(setup: JsonObject): ProxyCheapMarketpla
 
     const regions = array(regionsByCountry[country]).map((value) => {
       const entry = optionObject(value);
-      // The display label (e.g. "Virginia") is not necessarily the provider
-      // value. Prefer the provider's code/id and keep the label for the UI.
-      const target = firstText(entry.code, entry.regionCode, entry.region_code, entry.id, entry.value, entry.key, entry.name, entry.label);
+      // Proxy-Cheap documents region.id as the value to send. Keep display
+      // labels separate, while accepting aliases from compatible responses.
+      const target = firstText(entry.id, entry.code, entry.regionCode, entry.region_code, entry.value, entry.key, entry.name, entry.label);
       const label = firstText(entry.label, entry.name, entry.region, entry.code, entry.regionCode, entry.region_code, entry.id, target);
       const aliases = [entry.code, entry.regionCode, entry.region_code, entry.id, entry.value, entry.key, entry.name, entry.label, target]
         .map((alias) => firstText(alias))
@@ -188,16 +188,18 @@ export function buildProxyCheapOrderPayload(input: {
   periodMonths?: unknown;
 }) {
   const location = parseProxyCheapLocation(input.locationId ?? input.country);
-  return {
+  const payload: JsonObject = {
     planId: String(input.planId ?? ''),
     quantity: 1,
-    country: location.country,
-    region: location.region,
-    city: location.city,
-    ispId: location.ispId,
     period: { unit: 'months', value: Number(input.periodMonths ?? 1) },
-    couponCode: '',
   };
+  // These are optional in the provider API. An omitted property means “any”,
+  // while an empty string can be rejected as an invalid value.
+  if (location.country) payload.country = location.country;
+  if (location.region) payload.region = location.region;
+  if (location.city) payload.city = location.city;
+  if (location.ispId) payload.ispId = location.ispId;
+  return payload;
 }
 
 /**
@@ -250,7 +252,7 @@ export function validateProxyCheapLocation(setup: JsonObject, location: ProxyChe
 
   const regions = array(object(setup.regions)[country]).map(optionObject);
   const cities = array(object(setup.cities)[country]).map(optionObject);
-  const regionEntry = region ? regions.find((entry) => optionText(entry) === region || firstText(entry.id) === region) : undefined;
+  const regionEntry = region ? regions.find((entry) => firstText(entry.id, entry.code, entry.regionCode, entry.region_code, entry.value, entry.key, entry.name, entry.label) === region) : undefined;
   if (region && !regionEntry) throw new ProxyCheapLocationError('NO_SUCH_REGION');
 
   const cityEntry = city ? cities.find((entry) => firstText(entry.id, entry.code, entry.name, entry.label) === city) : undefined;

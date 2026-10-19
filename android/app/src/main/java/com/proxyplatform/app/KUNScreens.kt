@@ -348,6 +348,8 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
         if (section == "proxies") vm.loadRemoteProxies()
     }
     LaunchedEffect(vm.purchaseOptions) {
+        // A Proxy-Cheap plan change replaces the options object. Keep the plan
+        // selection, but discard location selections from the previous catalog.
         selectedCountry = null; selectedState = null; selectedProvider = null; review = false
     }
     LaunchedEffect(vm.selectedMarketplaceProvider) { selectedCountry = null; selectedState = null; selectedProvider = null; selectedPlan = null; review = false }
@@ -390,13 +392,16 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                 }
             } else {
                     item { Text("شراء بروكسي — ${vm.marketplaceProviders.firstOrNull { it.id == vm.selectedMarketplaceProvider }?.name ?: "السيرفر"}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
-                if (vm.purchaseError != null) item { StateCard(if (options == null) "تعذر تحميل خيارات الشراء" else "تعذر إتمام العملية", vm.purchaseError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.clearPurchaseError(); if (options == null) { vm.closePurchase(); vm.loadPurchaseOptions() } }) }
+                if (vm.purchaseError != null) item { StateCard(if (options == null) "تعذر تحميل خيارات الشراء" else "تعذر إتمام العملية", vm.purchaseError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.clearPurchaseError(); if (options == null) { val plan = selectedPlan; vm.closePurchase(); if (plan != null && vm.selectedMarketplaceProvider != "ezproxy") vm.loadPurchaseOptionsFor(vm.selectedMarketplaceProvider, plan.serviceId, plan.providerPlanId.ifBlank { plan.id }) else vm.loadPurchaseOptions() } }) }
                 if (vm.purchaseLoading && options == null) item { StateCard("جارٍ تحميل الدول", "نطلب الخيارات المتاحة من مزود الخدمة.", loading = true) }
                 else if (options != null) {
                     if (options.provider != "ezproxy" && selectedPlan == null) item { SelectionStep("1", "اختر الباقة أو المنتج السكني", options.plans.map { it.name }, null) { name ->
                         val plan = options.plans.firstOrNull { it.name == name }; selectedPlan = plan; review = false
+                        if (plan != null) vm.loadPurchaseOptionsFor(options.provider, plan.serviceId.ifBlank { options.serviceId }, plan.providerPlanId.ifBlank { plan.id })
                     } }
-                    if (options.provider == "ezproxy" || selectedPlan != null) {
+                    val planMatches = options.provider == "ezproxy" || (selectedPlan != null && (options.selectedPlanId.isBlank() || options.selectedPlanId == selectedPlan.let { plan -> plan?.providerPlanId.orEmpty().ifBlank { plan?.id.orEmpty() } }))
+                    if (options.provider != "ezproxy" && selectedPlan != null && !planMatches) item { StateCard("جارٍ تحميل مواقع الباقة", "نطلب الدول والولايات والمزودين المتاحين للباقة المختارة.", loading = true) }
+                    if (planMatches) {
                         item { SelectionStep(if (options.provider == "ezproxy") "1" else "2", "اختر الدولة", countries, selectedCountry) { selectedCountry = it; selectedState = null; selectedProvider = null; review = false } }
                         if (selectedCountry != null && states.isNotEmpty()) item { SelectionStep(if (options.provider == "ezproxy") "2" else "3", "اختر الولاية", states, selectedState) { selectedState = it; selectedProvider = null; review = false } }
                         if (selectedCountry != null && states.isEmpty()) item { SelectionStep(if (options.provider == "ezproxy") "2" else "3", "اختر الموقع المتاح", providers.map { it.provider.ifBlank { it.country } }.distinct(), selectedProvider?.provider ?: selectedProvider?.country) { name -> selectedProvider = providers.firstOrNull { it.provider.ifBlank { it.country } == name }; review = false } }
