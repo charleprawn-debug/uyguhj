@@ -9,6 +9,7 @@ export type ProxyCheapLocation = {
 
 export type ProxyCheapMarketplaceLocation = {
   id: string;
+  countryCode: string;
   country: string;
   state: string;
   isp: string;
@@ -128,6 +129,7 @@ export function buildProxyCheapLocations(setup: JsonObject): ProxyCheapMarketpla
 
     const result: ProxyCheapMarketplaceLocation[] = [{
       id: encodeProxyCheapLocation({ country, region: '', city: '', ispId: '' }),
+      countryCode: country,
       country: countryName,
       state: '',
       isp: '',
@@ -139,6 +141,7 @@ export function buildProxyCheapLocations(setup: JsonObject): ProxyCheapMarketpla
       for (const isp of ispChoices(region.ispOptions, 'الولاية مباشرة')) {
         result.push({
           id: encodeProxyCheapLocation({ country, region: region.target, city: '', ispId: isp.id }),
+          countryCode: country,
           country: countryName,
           state: region.label,
           isp: isp.label,
@@ -156,6 +159,7 @@ export function buildProxyCheapLocations(setup: JsonObject): ProxyCheapMarketpla
       for (const isp of ispChoices(city.isps, cityName)) {
         result.push({
           id: encodeProxyCheapLocation({ country, region: region.target, city: cityId, ispId: isp.id }),
+          countryCode: country,
           country: countryName,
           state: region.label,
           isp: `${cityName} • ${isp.label}`,
@@ -170,6 +174,7 @@ export function buildProxyCheapLocations(setup: JsonObject): ProxyCheapMarketpla
       if (!ispId) continue;
       result.push({
         id: encodeProxyCheapLocation({ country, region: '', city: '', ispId }),
+        countryCode: country,
         country: countryName,
         state: '',
         isp: firstText(isp.label, isp.name, isp.id, isp.code),
@@ -201,6 +206,16 @@ export function buildProxyCheapOrderPayload(input: {
   if (location.ispId) payload.ispId = location.ispId;
   return payload;
 }
+
+export const buildProxyCheapExecutePayload = (pricePayload: JsonObject, trafficGb: unknown = 1): JsonObject => {
+  const traffic = Number(trafficGb);
+  const validTraffic = Number.isFinite(traffic) && traffic > 0 ? traffic : 1;
+  return {
+    ...pricePayload,
+    autoExtend: { isEnabled: false, traffic: validTraffic },
+    traffic: validTraffic,
+  };
+};
 
 /**
  * Proxy-Cheap plans are sent as `planId` (e.g. "basic"). Older clients may send

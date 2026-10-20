@@ -6,7 +6,7 @@ import { ezProxyService } from '../services/ezProxy';
 import { proxyCheapService } from '../services/proxyCheap';
 import { proxySellerService } from '../services/proxySeller';
 import { encryptionService } from '../utils/encryption';
-import { buildProxyCheapLocations, buildProxyCheapOrderPayload, friendlyProxyCheapError, normalizeProxyCheapPlanId, parseProxyCheapLocation, ProxyCheapLocationError, validateProxyCheapLocation } from '../services/proxyCheapLocations';
+import { buildProxyCheapExecutePayload, buildProxyCheapLocations, buildProxyCheapOrderPayload, friendlyProxyCheapError, normalizeProxyCheapPlanId, parseProxyCheapLocation, ProxyCheapLocationError, validateProxyCheapLocation } from '../services/proxyCheapLocations';
 
 const router = Router();
 const money = (value: string | number) => {
@@ -105,7 +105,7 @@ const proxyCheapFailure = (error: unknown, fallback: string) => {
 async function purchaseExternal(req: any, res: any, provider: string) {
   const body = firstObject(req.body); const requestId = typeof body.clientRequestId === 'string' && body.clientRequestId ? body.clientRequestId : crypto.randomUUID();
   const username = typeof body.username === 'string' ? body.username : ''; const password = typeof body.password === 'string' ? body.password : '';
-  const country = String(body.country ?? body.locationId ?? ''); const planId = String(body.planId ?? '');
+  const country = String(body.country ?? body.locationId ?? ''); const planId = normalizeProxyCheapPlanId(body.planId);
   if (!country || !planId) return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'اختر الدولة والمدة قبل المتابعة.' } });
   const { data: existing } = await supabaseAdmin.from('marketplace_proxy_orders').select('id,status,amount,provider_proxy_id').eq('client_request_id', requestId).eq('user_id', req.user.id).maybeSingle();
   if (existing?.status === 'completed') { const { data: saved } = await supabaseAdmin.from('user_proxy_credentials').select('*').eq('order_id', existing.id).single(); return res.json({ data: saved ? formatSavedProxy(saved, encryptionService.decrypt(saved.password_encrypted)) : existing }); }
@@ -128,7 +128,9 @@ async function purchaseExternal(req: any, res: any, provider: string) {
   const reserve = Array.isArray(reserved) ? reserved[0] : reserved;
   if (reserveError || !reserve?.success) { await supabaseAdmin.from('marketplace_proxy_orders').update({ status: 'failed', error_message: reserve?.message ?? reserveError?.message ?? 'Insufficient wallet balance' }).eq('id', orderId); return res.status(409).json({ error: { code: 'INSUFFICIENT_BALANCE', message: 'رصيد المحفظة غير كافٍ لإتمام الشراء.', data: { balance: reserve?.new_balance ?? null, required: price } } }); }
   try {
-    const result = provider === 'proxy-cheap' ? await proxyCheapService.execute(proxyCheapServiceId, { ...payload, autoExtend: { isEnabled: false }, traffic: Number(body.trafficGb ?? 1) }) : await proxySellerService.createResidentialList(payload);
+    const result = provider === 'proxy-cheap'
+      ? await proxyCheapService.execute(proxyCheapServiceId, buildProxyCheapExecutePayload(payload, body.trafficGb ?? 1))
+      : await proxySellerService.createResidentialList(payload);
     const data = firstObject(result.data); const providerOrderId = String(data.id ?? data.orderId ?? data.order_id ?? result.id ?? '');
     if (!providerOrderId) throw new Error('لم يرجع المزود رقم الطلب/القائمة.');
     const proxy = provider === 'proxy-cheap' ? await proxyCheapService.waitForProxy(providerOrderId) : { id: providerOrderId, status: 'active', protocol: 'http', host: sellerLocation[0] === 'US' ? 'us.res.proxy-seller.com' : 'res.proxy-seller.com', port: 10000, username: String(data.login ?? ''), password: String(data.password ?? ''), expiresAt: undefined, location: payload.geo as Record<string, unknown> };

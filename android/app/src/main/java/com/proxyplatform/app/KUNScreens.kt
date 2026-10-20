@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -34,8 +35,10 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -331,16 +334,28 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
     var section by remember { mutableStateOf("home") }
     var selectedCountry by remember { mutableStateOf<String?>(null) }
     var selectedState by remember { mutableStateOf<String?>(null) }
+    var selectedCity by remember { mutableStateOf<String?>(null) }
     var selectedProvider by remember { mutableStateOf<ProxyPurchaseLocation?>(null) }
     var selectedPlan by remember { mutableStateOf<ProxyPurchasePlan?>(null) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var review by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf<String?>(null) }
     val options = vm.purchaseOptions
     val locations = options?.locations.orEmpty()
-    val countries = locations.map { it.country }.filter { it.isNotBlank() }.distinct().sorted()
-    val states = locations.filter { it.country == selectedCountry }.map { it.state }.filter { it.isNotBlank() }.distinct().sorted()
-    val providers = locations.filter { it.country == selectedCountry && it.state == selectedState }
+    val countryOptions = locations.map { it.country to it.countryCode }.filter { it.first.isNotBlank() }.distinctBy { it.first }.sortedBy { it.first }
+    val countries = countryOptions.map { it.first }
+    val countryLocations = locations.filter { it.country == selectedCountry }
+    val states = countryLocations.map { it.state }.filter { it.isNotBlank() }.distinct().sorted()
+    val stateLocations = countryLocations.filter { selectedState == null || it.state == selectedState }
+    val cityName = { location: ProxyPurchaseLocation -> location.provider.substringBefore(" • ").trim().takeIf { " • " in location.provider } }
+    val cities = stateLocations.mapNotNull(cityName).distinct().sorted()
+    val cityLocations = stateLocations
+    val providers = cityLocations.filter { location ->
+        val locationCity = cityName(location)
+        (selectedCity == null || locationCity == selectedCity) && location.provider.isNotBlank()
+    }
+    val isps = providers.map { it.provider.substringAfter(" • ", it.provider) }.distinct().sorted()
     val activeProxies = vm.remoteProxies.filter { it.status.isBlank() || it.status.equals("active", true) }
 
     LaunchedEffect(section) {
@@ -350,9 +365,9 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
     LaunchedEffect(vm.purchaseOptions) {
         // A Proxy-Cheap plan change replaces the options object. Keep the plan
         // selection, but discard location selections from the previous catalog.
-        selectedCountry = null; selectedState = null; selectedProvider = null; review = false
+        selectedCountry = null; selectedState = null; selectedCity = null; selectedProvider = null; picker = null; review = false
     }
-    LaunchedEffect(vm.selectedMarketplaceProvider) { selectedCountry = null; selectedState = null; selectedProvider = null; selectedPlan = null; review = false }
+    LaunchedEffect(vm.selectedMarketplaceProvider) { selectedCountry = null; selectedState = null; selectedCity = null; selectedProvider = null; picker = null; selectedPlan = null; review = false }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
@@ -395,17 +410,21 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
                 if (vm.purchaseError != null) item { StateCard(if (options == null) "تعذر تحميل خيارات الشراء" else "تعذر إتمام العملية", vm.purchaseError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.clearPurchaseError(); if (options == null) { val plan = selectedPlan; vm.closePurchase(); if (plan != null && vm.selectedMarketplaceProvider != "ezproxy") vm.loadPurchaseOptionsFor(vm.selectedMarketplaceProvider, plan.serviceId, plan.providerPlanId.ifBlank { plan.id }) else vm.loadPurchaseOptions() } }) }
                 if (vm.purchaseLoading && options == null) item { StateCard("جارٍ تحميل الدول", "نطلب الخيارات المتاحة من مزود الخدمة.", loading = true) }
                 else if (options != null) {
-                    if (options.provider != "ezproxy" && selectedPlan == null) item { SelectionStep("1", "اختر الباقة أو المنتج السكني", options.plans.map { it.name }, null) { name ->
-                        val plan = options.plans.firstOrNull { it.name == name }; selectedPlan = plan; review = false
-                        if (plan != null) vm.loadPurchaseOptionsFor(options.provider, plan.serviceId.ifBlank { options.serviceId }, plan.providerPlanId.ifBlank { plan.id })
-                    } }
+                    if (options.provider != "ezproxy") item {
+                        PlanChoiceCards(options.plans, selectedPlan) { plan ->
+                            if (selectedPlan?.providerPlanId != plan.providerPlanId || selectedPlan?.id != plan.id) {
+                                selectedPlan = plan; review = false
+                                vm.loadPurchaseOptionsFor(options.provider, plan.serviceId.ifBlank { options.serviceId }, plan.providerPlanId.ifBlank { plan.id })
+                            }
+                        }
+                    }
                     val planMatches = options.provider == "ezproxy" || (selectedPlan != null && (options.selectedPlanId.isBlank() || options.selectedPlanId == selectedPlan.let { plan -> plan?.providerPlanId.orEmpty().ifBlank { plan?.id.orEmpty() } }))
                     if (options.provider != "ezproxy" && selectedPlan != null && !planMatches) item { StateCard("جارٍ تحميل مواقع الباقة", "نطلب الدول والولايات والمزودين المتاحين للباقة المختارة.", loading = true) }
                     if (planMatches) {
-                        item { SelectionStep(if (options.provider == "ezproxy") "1" else "2", "اختر الدولة", countries, selectedCountry) { selectedCountry = it; selectedState = null; selectedProvider = null; review = false } }
-                        if (selectedCountry != null && states.isNotEmpty()) item { SelectionStep(if (options.provider == "ezproxy") "2" else "3", "اختر الولاية", states, selectedState) { selectedState = it; selectedProvider = null; review = false } }
-                        if (selectedCountry != null && states.isEmpty()) item { SelectionStep(if (options.provider == "ezproxy") "2" else "3", "اختر الموقع المتاح", providers.map { it.provider.ifBlank { it.country } }.distinct(), selectedProvider?.provider ?: selectedProvider?.country) { name -> selectedProvider = providers.firstOrNull { it.provider.ifBlank { it.country } == name }; review = false } }
-                        if (selectedState != null) item { SelectionStep("4", "اختر المزود", providers.map { it.provider.ifBlank { "مزود متاح" } }.distinct(), selectedProvider?.provider) { name -> selectedProvider = providers.firstOrNull { it.provider.ifBlank { "مزود متاح" } == name }; review = false } }
+                        item { LocationPickerField("الدولة", selectedCountry ?: "", "اختر الدولة", selectedCountry != null) { picker = "country" } }
+                        if (selectedCountry != null && states.isNotEmpty()) item { LocationPickerField("الولاية / المنطقة", selectedState ?: "", "اختر الولاية أو المنطقة", selectedState != null) { picker = "state" } }
+                        if (selectedCountry != null && cities.isNotEmpty()) item { LocationPickerField("المدينة", selectedCity ?: "", "اختر المدينة أو عشوائي", selectedCity != null) { picker = "city" } }
+                        if (selectedCountry != null && (states.isEmpty() || selectedState != null) && (cities.isEmpty() || selectedCity != null) && providers.isNotEmpty()) item { LocationPickerField("مزود الخدمة ISP", selectedProvider?.provider?.substringAfter(" • ", selectedProvider?.provider.orEmpty()) ?: "", "اختر المزود", selectedProvider != null) { picker = "isp" } }
                     }
                     if (selectedProvider != null) item {
                         KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -442,6 +461,128 @@ internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
             }
         }
     }
+    if (picker != null) {
+        val pickerValues = when (picker) {
+            "country" -> countries
+            "state" -> states
+            "city" -> listOf("عشوائي") + cities
+            "isp" -> isps
+            else -> emptyList()
+        }
+        SearchSelectionSheet(
+            title = when (picker) {
+                "country" -> "اختر الدولة"
+                "state" -> "اختر الولاية أو المنطقة"
+                "city" -> "اختر المدينة"
+                else -> "اختر مزود الخدمة"
+            },
+            values = pickerValues,
+            selected = when (picker) {
+                "country" -> selectedCountry
+                "state" -> selectedState
+                "city" -> selectedCity
+                else -> selectedProvider?.provider?.substringAfter(" • ", selectedProvider?.provider.orEmpty())
+            },
+            showFlags = picker == "country",
+            countryCodes = countryOptions.associate { it.first to it.second },
+            onDismiss = { picker = null },
+            onSelect = { value ->
+                when (picker) {
+                    "country" -> { selectedCountry = value; selectedState = null; selectedCity = null; selectedProvider = null }
+                    "state" -> { selectedState = value; selectedCity = null; selectedProvider = null }
+                    "city" -> {
+                        selectedCity = if (value == "عشوائي") cities.randomOrNull() else value
+                        selectedProvider = null
+                    }
+                    "isp" -> {
+                        selectedProvider = providers.firstOrNull { it.provider.substringAfter(" • ", it.provider) == value }
+                    }
+                }
+                review = false
+                picker = null
+            },
+        )
+    }
+}
+
+@Composable
+private fun PlanChoiceCards(plans: List<ProxyPurchasePlan>, selected: ProxyPurchasePlan?, onSelect: (ProxyPurchasePlan) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("1. خطة البروكسي", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        plans.forEach { plan ->
+            val active = selected?.providerPlanId == plan.providerPlanId && selected?.id == plan.id
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { onSelect(plan) },
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary else KunPalette.Border),
+            ) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(plan.name, fontWeight = FontWeight.Bold)
+                        Text("Proxy-Cheap • Static Residential IPv4", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(if (active) "✓" else "اختيار", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocationPickerField(title: String, value: String, placeholder: String, selected: Boolean, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(17.dp),
+        colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else KunPalette.Border),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(value.ifBlank { placeholder }, fontWeight = FontWeight.SemiBold, color = if (value.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+            }
+            Text("⌄", fontSize = 22.sp, color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchSelectionSheet(
+    title: String,
+    values: List<String>,
+    selected: String?,
+    showFlags: Boolean,
+    countryCodes: Map<String, String>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    var query by remember(title, values) { mutableStateOf("") }
+    val filtered = values.filter { it.contains(query.trim(), ignoreCase = true) }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
+            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("بحث") }, singleLine = true, shape = RoundedCornerShape(15.dp))
+            LazyColumn(contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(filtered, key = { it }) { value ->
+                    Card(Modifier.fillMaxWidth().clickable { onSelect(value) }, shape = RoundedCornerShape(15.dp), colors = CardDefaults.cardColors(containerColor = if (value == selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (showFlags) Text(countryFlag(countryCodes[value].orEmpty()), fontSize = 23.sp, modifier = Modifier.padding(end = 10.dp))
+                            Text(value, Modifier.weight(1f), fontWeight = if (value == selected) FontWeight.Bold else FontWeight.Normal)
+                            if (value == selected) Text("✓", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun countryFlag(code: String): String {
+    val normalized = code.trim().uppercase(Locale.US)
+    if (normalized.length != 2) return "🌐"
+    return normalized.map { char -> String(Character.toChars(0x1F1E6 + char.code - 'A'.code)) }.joinToString("")
 }
 
 @Composable
