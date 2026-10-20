@@ -58,8 +58,9 @@ describe('Proxy-Cheap provider location mapping', () => {
     expect(payload).toMatchObject({
       planId: 'premium',
       country: 'US',
-      autoExtend: { isEnabled: false, traffic: 1 },
+      autoExtend: { isEnabled: false },
       traffic: 1,
+      couponCode: '',
     });
   });
 

@@ -212,8 +212,9 @@ export const buildProxyCheapExecutePayload = (pricePayload: JsonObject, trafficG
   const validTraffic = Number.isFinite(traffic) && traffic > 0 ? traffic : 1;
   return {
     ...pricePayload,
-    autoExtend: { isEnabled: false, traffic: validTraffic },
+    autoExtend: { isEnabled: false },
     traffic: validTraffic,
+    couponCode: '',
   };
 };
 
