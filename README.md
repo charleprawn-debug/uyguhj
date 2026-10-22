@@ -26,24 +26,24 @@ LOG_LEVEL=info
 ADMIN_EMAILS=owner@example.com
 ```
 
-Do not put `SUPABASE_SERVICE_ROLE_KEY`, JWT secrets, or `ENCRYPTION_KEY` into Android or GitHub source. The current verified Railway API URL is `https://uyguhj-production.up.railway.app`. Verify it with:
+Do not put `SUPABASE_SERVICE_ROLE_KEY`, JWT secrets, or `ENCRYPTION_KEY` into Android or GitHub source. The current verified Render API URL is `https://uyguhj.onrender.com`. Verify it with:
 
 ```bash
-curl -fsS https://uyguhj-production.up.railway.app/livez
-curl -fsS https://uyguhj-production.up.railway.app/readyz
-curl -fsS https://uyguhj-production.up.railway.app/api/v1/products
+curl -fsS https://uyguhj.onrender.com/livez
+curl -fsS https://uyguhj.onrender.com/readyz
+curl -fsS https://uyguhj.onrender.com/api/v1/products
 ```
 
-## Android build against Railway
+## Android build against Render
 
-Set `API_BASE_URL` to the Railway API URL including `/api/v1`:
+Set `API_BASE_URL` to the Render API URL including `/api/v1`:
 
 ```bash
 cd android
-./gradlew assembleDebug -PAPI_BASE_URL=https://uyguhj-production.up.railway.app/api/v1
+./gradlew assembleDebug -PAPI_BASE_URL=https://uyguhj.onrender.com/api/v1
 ```
 
-GitHub Actions now verifies the Railway API before building Android and uses `https://uyguhj-production.up.railway.app/api/v1` by default. You can override it with a repository variable named `API_BASE_URL`. The workflow uploads `app-debug.apk` as `proxy-platform-debug-apk`.
+GitHub Actions now verifies the Render API before building Android and uses `https://uyguhj.onrender.com/api/v1` by default. You can override it with a repository variable named `API_BASE_URL`. The workflow uploads `app-debug.apk` as `proxy-platform-debug-apk`.
 
 ## Local backend
 
