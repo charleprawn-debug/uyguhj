@@ -117,7 +117,7 @@ async function purchaseExternal(req: any, res: any, provider: string) {
     catch (error) { const failure = proxyCheapFailure(error, 'تعذر التحقق من الموقع لدى المزود.'); return res.status(failure.status).json({ error: { code: failure.code, message: failure.message } }); }
   } else payload = { title: String(body.title ?? `Proxy Platform ${new Date().toISOString().slice(0, 10)}`).slice(0, 80), whitelist: '', geo: { country: sellerLocation[0] ?? '', region: sellerLocation[1] ?? '', city: sellerLocation[2] ?? '', isp: sellerLocation[3] ?? '' }, export: { ports: Math.min(1000, Math.max(1, Number(body.ports ?? 1))), ext: 'csv' }, rotation: Number(body.rotation ?? -1) };
   let price = 0;
-  try { if (provider === 'proxy-cheap') price = providerPrice(await proxyCheapService.price(proxyCheapServiceId, payload)); }
+  try { if (provider === 'proxy-cheap') { const quoted = await proxyCheapService.quote(proxyCheapServiceId, payload, body.trafficGb ?? 1); payload = quoted.payload; price = providerPrice(quoted.response); } }
   catch (error) { const failure = proxyCheapFailure(error, 'تعذر الحصول على السعر من المزود.'); return res.status(failure.status).json({ error: { code: failure.code, message: failure.message } }); }
   const orderId = existing?.id ?? crypto.randomUUID();
   if (!existing) {
@@ -129,7 +129,7 @@ async function purchaseExternal(req: any, res: any, provider: string) {
   if (reserveError || !reserve?.success) { await supabaseAdmin.from('marketplace_proxy_orders').update({ status: 'failed', error_message: reserve?.message ?? reserveError?.message ?? 'Insufficient wallet balance' }).eq('id', orderId); return res.status(409).json({ error: { code: 'INSUFFICIENT_BALANCE', message: 'رصيد المحفظة غير كافٍ لإتمام الشراء.', data: { balance: reserve?.new_balance ?? null, required: price } } }); }
   try {
     const result = provider === 'proxy-cheap'
-      ? await proxyCheapService.execute(proxyCheapServiceId, buildProxyCheapExecutePayload(payload, body.trafficGb ?? 1))
+      ? await proxyCheapService.execute(proxyCheapServiceId, buildProxyCheapExecutePayload(payload))
       : await proxySellerService.createResidentialList(payload);
     const data = firstObject(result.data); const providerOrderId = String(data.id ?? data.orderId ?? data.order_id ?? result.id ?? '');
     if (!providerOrderId) throw new Error('لم يرجع المزود رقم الطلب/القائمة.');
@@ -195,7 +195,7 @@ router.post('/purchase-quote', requireAuth, async (req, res) => {
   if (provider !== 'proxy-cheap') return res.status(400).json({ error: { code: 'VALIDATION_ERROR', message: 'المزود لا يحتاج إلى تسعير خارجي.' } });
   try {
     const { serviceId, payload } = await resolveProxyCheapPayload(firstObject(req.body));
-    const price = providerPrice(await proxyCheapService.price(serviceId, payload));
+    const price = providerPrice((await proxyCheapService.quote(serviceId, payload)).response);
     return res.json({ data: { provider, price, currency: 'USD', price_available: true } });
   } catch (error) { const failure = proxyCheapFailure(error, 'تعذر حساب السعر.'); return res.status(failure.status).json({ error: { code: failure.code, message: failure.message } }); }
 });
