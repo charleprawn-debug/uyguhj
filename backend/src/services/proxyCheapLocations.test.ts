@@ -53,15 +53,16 @@ describe('Proxy-Cheap provider location mapping', () => {
     expect(payload).toEqual({ planId: 'basic', quantity: 1, period: { unit: 'months', value: 1 }, country: 'DE' });
   });
 
-  it('builds the documented execute payload without enabling auto-extension', () => {
-    const payload = buildProxyCheapExecutePayload({ planId: 'premium', quantity: 1, country: 'US', period: { unit: 'months', value: 1 } }, 1);
-    expect(payload).toMatchObject({
-      planId: 'premium',
-      country: 'US',
-      autoExtend: { isEnabled: false },
-      traffic: 1,
-      couponCode: '',
-    });
+  it('builds the execute payload without enabling auto-extension and without blank values', () => {
+    const payload = buildProxyCheapExecutePayload({ planId: 'premium', quantity: 1, country: 'US', period: { unit: 'months', value: 1 } });
+    expect(payload).toEqual({ planId: 'premium', quantity: 1, country: 'US', period: { unit: 'months', value: 1 }, autoExtend: { isEnabled: false } });
+    expect(payload).not.toHaveProperty('couponCode');
+    expect(payload).not.toHaveProperty('traffic');
+  });
+
+  it('only sends a coupon code when a real one is given', () => {
+    expect(buildProxyCheapExecutePayload({ planId: 'basic' }, '   ')).not.toHaveProperty('couponCode');
+    expect(buildProxyCheapExecutePayload({ planId: 'basic' }, ' SAVE10 ')).toMatchObject({ couponCode: 'SAVE10' });
   });
 
   it('continues to parse legacy pipe-delimited location IDs', () => {
