@@ -207,15 +207,16 @@ export function buildProxyCheapOrderPayload(input: {
   return payload;
 }
 
-export const buildProxyCheapExecutePayload = (pricePayload: JsonObject, trafficGb: unknown = 1): JsonObject => {
-  const traffic = Number(trafficGb);
-  const validTraffic = Number.isFinite(traffic) && traffic > 0 ? traffic : 1;
-  return {
-    ...pricePayload,
-    autoExtend: { isEnabled: false },
-    traffic: validTraffic,
-    couponCode: '',
-  };
+/**
+ * Execute payload = the exact payload that was priced + the auto-extend switch.
+ * Blank values are NEVER sent: the provider answers an empty `couponCode` with NOT_BLANK, and
+ * `traffic` is only sent when the quote step proved the plan needs it (it is already part of
+ * `pricePayload` in that case).
+ */
+export const buildProxyCheapExecutePayload = (pricePayload: JsonObject, couponCode?: unknown): JsonObject => {
+  const payload: JsonObject = { ...pricePayload, autoExtend: { isEnabled: false } };
+  if (typeof couponCode === 'string' && couponCode.trim()) payload.couponCode = couponCode.trim();
+  return payload;
 };
 
 /**
