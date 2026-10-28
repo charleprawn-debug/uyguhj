@@ -234,13 +234,12 @@ private fun AuthModeButton(label: String, selected: Boolean, modifier: Modifier 
 @Composable
 internal fun MainShell(vm: AppViewModel) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    var screen by remember { mutableStateOf(Screen.MARKET) }
+    var screen by remember { mutableStateOf(Screen.SUBSCRIPTIONS) }
     LaunchedEffect(Unit) { vm.loadPlansAndWallet() }
     LaunchedEffect(screen) {
         AdvancedOperationLog.info(context, "App navigation: ${screen.name}.")
         vm.clearError()
         when (screen) {
-            Screen.MARKET -> vm.loadMarket()
             Screen.PROFILE -> { vm.loadProfile(); vm.loadPlansAndWallet() }
             Screen.SUBSCRIPTIONS -> vm.loadSubscriptions()
             Screen.PROXY -> Unit
@@ -250,7 +249,6 @@ internal fun MainShell(vm: AppViewModel) {
     }
 
     val sectionTitle = when (screen) {
-        Screen.MARKET -> "السوق"
         Screen.SUBSCRIPTIONS -> "اشتراكاتي"
         Screen.PROXY -> "اتصال البروكسي"
         Screen.SIM -> "SIM"
@@ -258,7 +256,6 @@ internal fun MainShell(vm: AppViewModel) {
         Screen.WALLET -> "المحفظة"
     }
     val sectionDescription = when (screen) {
-        Screen.MARKET -> "تصفّح المنتجات المتاحة"
         Screen.SUBSCRIPTIONS -> "إدارة خططك الحالية"
         Screen.PROXY -> "إعداد اتصالك والتحكم فيه"
         Screen.SIM -> "اختبار خصائص المشغّل عبر ADB"
@@ -290,7 +287,6 @@ internal fun MainShell(vm: AppViewModel) {
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface, tonalElevation = 5.dp) {
                 val entries = listOf(
-                    Triple(Screen.MARKET, "السوق", R.drawable.ic_nav_market),
                     Triple(Screen.SUBSCRIPTIONS, "الخطط", R.drawable.ic_nav_subscriptions),
                     Triple(Screen.PROXY, "الاتصال", R.drawable.ic_nav_proxy),
                     Triple(Screen.SIM, "SIM", R.drawable.ic_nav_sim),
@@ -316,8 +312,7 @@ internal fun MainShell(vm: AppViewModel) {
     ) { padding ->
         Crossfade(targetState = screen, modifier = Modifier.fillMaxSize()) { destination ->
             when (destination) {
-                Screen.MARKET -> Marketplace(vm, padding)
-                Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding) { screen = Screen.MARKET }
+                Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding)
                 Screen.PROXY -> FeatureGate(vm.access.vpn || vm.access.advanced, "لا يوجد اشتراك اتصال نشط") { ProxyScreen(padding) }
                 Screen.SIM -> FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") { SimScreen(padding) }
                 Screen.PROFILE -> ProfileScreen(vm, padding, onWallet = { screen = Screen.WALLET }, onPlans = { screen = Screen.SUBSCRIPTIONS })
@@ -328,299 +323,7 @@ internal fun MainShell(vm: AppViewModel) {
 }
 
 @Composable
-internal fun Marketplace(vm: AppViewModel, padding: PaddingValues) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    var section by remember { mutableStateOf("home") }
-    var selectedCountry by remember { mutableStateOf<String?>(null) }
-    var selectedState by remember { mutableStateOf<String?>(null) }
-    var selectedCity by remember { mutableStateOf<String?>(null) }
-    var selectedProvider by remember { mutableStateOf<ProxyPurchaseLocation?>(null) }
-    var selectedPlan by remember { mutableStateOf<ProxyPurchasePlan?>(null) }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var review by remember { mutableStateOf(false) }
-    var picker by remember { mutableStateOf<String?>(null) }
-    val options = vm.purchaseOptions
-    val locations = options?.locations.orEmpty()
-    val countryOptions = locations.map { it.country to it.countryCode }.filter { it.first.isNotBlank() }.distinctBy { it.first }.sortedBy { it.first }
-    val countries = countryOptions.map { it.first }
-    val countryLocations = locations.filter { it.country == selectedCountry }
-    val states = countryLocations.map { it.state }.filter { it.isNotBlank() }.distinct().sorted()
-    val stateLocations = countryLocations.filter { selectedState == null || it.state == selectedState }
-    val cityName = { location: ProxyPurchaseLocation -> location.provider.substringBefore(" • ").trim().takeIf { " • " in location.provider } }
-    val cities = stateLocations.mapNotNull(cityName).distinct().sorted()
-    val cityLocations = stateLocations
-    val providers = cityLocations.filter { location ->
-        val locationCity = cityName(location)
-        (selectedCity == null || locationCity == selectedCity) && location.provider.isNotBlank()
-    }
-    val isps = providers.map { it.provider.substringAfter(" • ", it.provider) }.distinct().sorted()
-    val activeProxies = vm.remoteProxies.filter { it.status.isBlank() || it.status.equals("active", true) }
-
-    LaunchedEffect(section) {
-        if (section == "purchase" && vm.purchaseOptions == null) vm.loadPurchaseOptions()
-        if (section == "proxies") vm.loadRemoteProxies()
-    }
-    LaunchedEffect(vm.purchaseOptions) {
-        // A Proxy-Cheap plan change replaces the options object. Keep the plan
-        // selection, but discard location selections from the previous catalog.
-        selectedCountry = null; selectedState = null; selectedCity = null; selectedProvider = null; picker = null; review = false
-    }
-    LaunchedEffect(vm.selectedMarketplaceProvider) { selectedCountry = null; selectedState = null; selectedCity = null; selectedProvider = null; picker = null; selectedPlan = null; review = false }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(padding),
-        contentPadding = PaddingValues(start = 16.dp, top = 18.dp, end = 16.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        item {
-            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = KunPalette.PrimaryDeep)) {
-                Column(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(KunPalette.PrimaryDeep, KunPalette.Primary, KunPalette.Cyan))).padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("السوق", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.ExtraBold)
-                    Text("إدارة بروكسياتك وشراء اتصال جديد بخطوات واضحة وسريعة.", color = Color.White.copy(alpha = .88f), style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-        }
-        if (section == "home") {
-            item { MarketActionCard("بروكسياتي", "عرض البروكسيات النشطة واختيار البروكسي المستخدم", "فتح بروكسياتي") { section = "proxies" } }
-            item { MarketActionCard("شراء بروكسي", "اختر السيرفر المناسب ثم أكمل خطوات الشراء والسعر المباشر.", "اختيار السيرفر", highlighted = true) { section = "servers" } }
-        } else {
-            item { TextButton(onClick = { section = "home"; vm.closePurchase() }) { Text("رجوع إلى السوق") } }
-            if (section == "servers") {
-                item { Text("اختر سيرفر الشراء", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
-                if (vm.marketplaceProvidersLoading) item { StateCard("جارٍ تحميل السيرفرات", "نجهز مزودي البروكسي المتاحين.", loading = true) }
-                else if (vm.marketplaceProvidersError != null) item { StateCard("تعذر تحميل السيرفرات", vm.marketplaceProvidersError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadMarketplaceProviders() }) }
-                else items(vm.marketplaceProviders.filter { it.id != "proxy-seller" }, key = { it.id }) { provider ->
-                    MarketActionCard(provider.name, provider.description, "المتابعة مع ${provider.name}", highlighted = provider.number == 1) { vm.chooseMarketplaceProvider(provider.id); section = "purchase"; vm.loadPurchaseOptions() }
-                }
-            } else if (section == "proxies") {
-                item { Text("بروكسياتي", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
-                if (vm.remoteProxiesLoading) item { StateCard("جارٍ تحميل البروكسيات", "نقرأ البروكسيات المرتبطة بحسابك.", loading = true) }
-                else if (vm.remoteProxiesError != null) item { StateCard("تعذر تحميل البروكسيات", vm.remoteProxiesError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadRemoteProxies() }) }
-                else if (activeProxies.isEmpty()) item { StateCard("لا توجد بروكسيات نشطة", "اشترِ بروكسيًا جديدًا ليظهر هنا تلقائيًا.", actionLabel = "شراء بروكسي", onAction = { section = "purchase" }) }
-                else items(activeProxies, key = { it.id }) { proxy ->
-                    RemoteProxyCard(proxy) {
-                        runCatching { ProxyProfileStore(context.applicationContext).save(SavedProxy(proxy.id.ifBlank { UUID.randomUUID().toString() }, proxy.location.ifBlank { "بروكسي محفوظ" }, proxy.protocol, proxy.host, proxy.port, proxy.username.isNotBlank(), proxy.username, proxy.password)) }
-                            .onSuccess { section = "home" }
-                    }
-                }
-            } else {
-                    item { Text("شراء بروكسي — ${vm.marketplaceProviders.firstOrNull { it.id == vm.selectedMarketplaceProvider }?.name ?: "السيرفر"}", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold) }
-                if (vm.purchaseError != null) item { StateCard(if (options == null) "تعذر تحميل خيارات الشراء" else "تعذر إتمام العملية", vm.purchaseError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.clearPurchaseError(); if (options == null) { val plan = selectedPlan; vm.closePurchase(); if (plan != null && vm.selectedMarketplaceProvider != "ezproxy") vm.loadPurchaseOptionsFor(vm.selectedMarketplaceProvider, plan.serviceId, plan.providerPlanId.ifBlank { plan.id }) else vm.loadPurchaseOptions() } }) }
-                if (vm.purchaseLoading && options == null) item { StateCard("جارٍ تحميل الدول", "نطلب الخيارات المتاحة من مزود الخدمة.", loading = true) }
-                else if (options != null) {
-                    if (options.provider != "ezproxy") item {
-                        PlanChoiceCards(options.plans, selectedPlan) { plan ->
-                            if (selectedPlan?.providerPlanId != plan.providerPlanId || selectedPlan?.id != plan.id) {
-                                selectedPlan = plan; review = false
-                                vm.loadPurchaseOptionsFor(options.provider, plan.serviceId.ifBlank { options.serviceId }, plan.providerPlanId.ifBlank { plan.id })
-                            }
-                        }
-                    }
-                    val planMatches = options.provider == "ezproxy" || (selectedPlan != null && (options.selectedPlanId.isBlank() || options.selectedPlanId == selectedPlan.let { plan -> plan?.providerPlanId.orEmpty().ifBlank { plan?.id.orEmpty() } }))
-                    if (options.provider != "ezproxy" && selectedPlan != null && !planMatches) item { StateCard("جارٍ تحميل مواقع الباقة", "نطلب الدول والولايات والمزودين المتاحين للباقة المختارة.", loading = true) }
-                    if (planMatches) {
-                        item { LocationPickerField("الدولة", selectedCountry ?: "", "اختر الدولة", selectedCountry != null) { picker = "country" } }
-                        if (selectedCountry != null && states.isNotEmpty()) item { LocationPickerField("الولاية / المنطقة", selectedState ?: "", "اختر الولاية أو المنطقة", selectedState != null) { picker = "state" } }
-                        if (selectedCountry != null && cities.isNotEmpty()) item { LocationPickerField("المدينة", selectedCity ?: "", "اختر المدينة أو عشوائي", selectedCity != null) { picker = "city" } }
-                        if (selectedCountry != null && (states.isEmpty() || selectedState != null) && (cities.isEmpty() || selectedCity != null) && providers.isNotEmpty()) item { LocationPickerField("مزود الخدمة ISP", selectedProvider?.provider?.substringAfter(" • ", selectedProvider?.provider.orEmpty()) ?: "", "اختر المزود", selectedProvider != null) { picker = "isp" } }
-                    }
-                    if (selectedProvider != null) item {
-                        KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text("البيانات النهائية", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            if (options.provider == "ezproxy") {
-                                Text("ستُستخدم هذه البيانات لإنشاء البروكسي لدى المزود.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                OutlinedTextField(username, { username = it }, Modifier.fillMaxWidth(), label = { Text("اسم المستخدم") }, singleLine = true, shape = RoundedCornerShape(15.dp))
-                                OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة المرور") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), shape = RoundedCornerShape(15.dp))
-                            } else Text("سيُصدر المزود بيانات الدخول تلقائيًا بعد إنشاء البروكسي السكني.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (options.provider == "ezproxy") Text("5. اختر المدة", fontWeight = FontWeight.Bold)
-                            if (options.provider == "ezproxy") options.plans.forEach { plan -> FilterChip(selected = selectedPlan?.id == plan.id, onClick = { selectedPlan = plan; review = false }, label = { Text(if (plan.price > 0) "${plan.name} — ${"%.2f".format(Locale.US, plan.price)} دولار" else "${plan.name} — السعر يحسب مباشرة من المزود") }, modifier = Modifier.fillMaxWidth()) }
-                            val ready = (options.provider != "ezproxy" || (username.trim().length >= 3 && password.length >= 6)) && selectedPlan != null
-                            Button(onClick = { review = true; if (selectedPlan != null && selectedProvider != null) vm.loadProxyQuote(options, selectedPlan!!, selectedProvider!!) }, enabled = ready && !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("مراجعة الطلب", fontWeight = FontWeight.Bold) }
-                        } }
-                    }
-                    if (review && selectedProvider != null && selectedPlan != null) item {
-                        val plan = selectedPlan!!
-                        KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("مراجعة وتأكيد", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                            KeyValueRow("الدولة", selectedProvider!!.country)
-                            KeyValueRow("الولاية", selectedProvider!!.state)
-                            KeyValueRow("المزود", selectedProvider!!.provider)
-                            KeyValueRow("المدة", plan.name)
-                            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp)) { Text(vm.purchaseQuote?.let { "الإجمالي: ${"%.2f".format(Locale.US, it)} دولار — رصيدك: ${"%.2f".format(Locale.US, vm.wallet?.balance ?: 0.0)} ${vm.wallet?.currency ?: "USD"}" } ?: if (options.provider == "proxy-seller") "لا يعرض Proxy-Seller سعر إنشاء القائمة؛ سيتم استخدام باقتك residential الحالية." else "جارٍ جلب السعر المباشر من المزود…", Modifier.fillMaxWidth().padding(12.dp), fontWeight = FontWeight.Bold) }
-                            Button(onClick = { vm.confirmProxyPurchase(options, plan, selectedProvider!!, if (options.provider == "ezproxy") username.trim() else "", if (options.provider == "ezproxy") password else "") { purchased ->
-                                runCatching { ProxyProfileStore(context.applicationContext).save(SavedProxy(UUID.randomUUID().toString(), "${selectedProvider!!.country} • ${selectedProvider!!.provider}", purchased.protocol, purchased.host, purchased.port, true, purchased.username, purchased.password)) }
-                                section = "proxies"; vm.loadRemoteProxies()
-                            } }, enabled = !vm.purchaseLoading, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(16.dp)) {
-                                if (vm.purchaseLoading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("تأكيد الشراء والخصم من المحفظة", fontWeight = FontWeight.Bold)
-                            }
-                        } }
-                    }
-                }
-            }
-        }
-    }
-    if (picker != null) {
-        val pickerValues = when (picker) {
-            "country" -> countries
-            "state" -> states
-            "city" -> listOf("عشوائي") + cities
-            "isp" -> isps
-            else -> emptyList()
-        }
-        SearchSelectionSheet(
-            title = when (picker) {
-                "country" -> "اختر الدولة"
-                "state" -> "اختر الولاية أو المنطقة"
-                "city" -> "اختر المدينة"
-                else -> "اختر مزود الخدمة"
-            },
-            values = pickerValues,
-            selected = when (picker) {
-                "country" -> selectedCountry
-                "state" -> selectedState
-                "city" -> selectedCity
-                else -> selectedProvider?.provider?.substringAfter(" • ", selectedProvider?.provider.orEmpty())
-            },
-            showFlags = picker == "country",
-            countryCodes = countryOptions.associate { it.first to it.second },
-            onDismiss = { picker = null },
-            onSelect = { value ->
-                when (picker) {
-                    "country" -> { selectedCountry = value; selectedState = null; selectedCity = null; selectedProvider = null }
-                    "state" -> { selectedState = value; selectedCity = null; selectedProvider = null }
-                    "city" -> {
-                        selectedCity = if (value == "عشوائي") cities.randomOrNull() else value
-                        selectedProvider = null
-                    }
-                    "isp" -> {
-                        selectedProvider = providers.firstOrNull { it.provider.substringAfter(" • ", it.provider) == value }
-                    }
-                }
-                review = false
-                picker = null
-            },
-        )
-    }
-}
-
-@Composable
-private fun PlanChoiceCards(plans: List<ProxyPurchasePlan>, selected: ProxyPurchasePlan?, onSelect: (ProxyPurchasePlan) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("1. خطة البروكسي", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        plans.forEach { plan ->
-            val active = selected?.providerPlanId == plan.providerPlanId && selected?.id == plan.id
-            Card(
-                modifier = Modifier.fillMaxWidth().clickable { onSelect(plan) },
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, if (active) MaterialTheme.colorScheme.primary else KunPalette.Border),
-            ) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(plan.name, fontWeight = FontWeight.Bold)
-                        Text("Proxy-Cheap • Static Residential IPv4", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Text(if (active) "✓" else "اختيار", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LocationPickerField(title: String, value: String, placeholder: String, selected: Boolean, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(17.dp),
-        colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else KunPalette.Border),
-    ) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(value.ifBlank { placeholder }, fontWeight = FontWeight.SemiBold, color = if (value.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
-            }
-            Text("⌄", fontSize = 22.sp, color = MaterialTheme.colorScheme.primary)
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SearchSelectionSheet(
-    title: String,
-    values: List<String>,
-    selected: String?,
-    showFlags: Boolean,
-    countryCodes: Map<String, String>,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit,
-) {
-    var query by remember(title, values) { mutableStateOf("") }
-    val filtered = values.filter { it.contains(query.trim(), ignoreCase = true) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("بحث") }, singleLine = true, shape = RoundedCornerShape(15.dp))
-            LazyColumn(contentPadding = PaddingValues(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(filtered, key = { it }) { value ->
-                    Card(Modifier.fillMaxWidth().clickable { onSelect(value) }, shape = RoundedCornerShape(15.dp), colors = CardDefaults.cardColors(containerColor = if (value == selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface)) {
-                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (showFlags) Text(countryFlag(countryCodes[value].orEmpty()), fontSize = 23.sp, modifier = Modifier.padding(end = 10.dp))
-                            Text(value, Modifier.weight(1f), fontWeight = if (value == selected) FontWeight.Bold else FontWeight.Normal)
-                            if (value == selected) Text("✓", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun countryFlag(code: String): String {
-    val normalized = code.trim().uppercase(Locale.US)
-    if (normalized.length != 2) return "🌐"
-    return normalized.map { char -> String(Character.toChars(0x1F1E6 + char.code - 'A'.code)) }.joinToString("")
-}
-
-@Composable
-private fun MarketActionCard(title: String, description: String, action: String, highlighted: Boolean = false, onClick: () -> Unit) {
-    Card(shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, KunPalette.Border)) {
-        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-            Text(description, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = onClick, Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(15.dp)) { Text(action, fontWeight = FontWeight.Bold) }
-        }
-    }
-}
-
-@Composable
-private fun SelectionStep(number: String, title: String, values: List<String>, selected: String?, onSelect: (String) -> Unit) {
-    KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Text("$number. $title", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        if (values.isEmpty()) Text("لا توجد خيارات متاحة حاليًا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        values.forEach { value -> FilterChip(selected = selected == value, onClick = { onSelect(value) }, label = { Text(value.ifBlank { "متاح" }) }, modifier = Modifier.fillMaxWidth()) }
-    } }
-}
-
-@Composable
-private fun RemoteProxyCard(proxy: RemoteProxy, onSelect: () -> Unit) {
-    Card(shape = RoundedCornerShape(22.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), border = BorderStroke(1.dp, KunPalette.Border)) {
-        Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(proxy.location.ifBlank { "بروكسي محفوظ" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                FeaturePill(if (proxy.status.equals("active", true)) "نشط" else proxy.status, color = if (proxy.status.equals("active", true)) KunPalette.Success else KunPalette.Warning, container = if (proxy.status.equals("active", true)) KunPalette.SuccessSoft else KunPalette.WarningSoft)
-            }
-            Text("${proxy.protocol.uppercase()} • ${proxy.host}:${proxy.port}", style = MaterialTheme.typography.bodyMedium)
-            if (proxy.expiresAt.isNotBlank()) Text("ينتهي: ${proxy.expiresAt}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = onSelect, Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) { Text("استخدام هذا البروكسي", fontWeight = FontWeight.Bold) }
-        }
-    }
-}
-
-@Composable
-internal fun Subscriptions(vm: AppViewModel, padding: PaddingValues, onMarket: () -> Unit) {
+internal fun Subscriptions(vm: AppViewModel, padding: PaddingValues) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(padding),
         contentPadding = PaddingValues(16.dp),

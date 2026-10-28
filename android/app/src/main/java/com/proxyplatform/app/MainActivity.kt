@@ -132,7 +132,7 @@ internal data class WalletTransaction(val amount: Double, val description: Strin
 internal data class TopUpMethod(val code: String, val name: String, val currency: String, val network: String, val address: String, val minAmount: Double, val exchangeRate: Double, val instructions: String)
 internal data class TopUpRequest(val id: String, val methodCode: String, val amount: Double, val currency: String, val expectedUsd: Double, val reference: String, val status: String, val createdAt: String)
 internal data class FeatureAccess(val advanced: Boolean = false, val sim: Boolean = false, val vpn: Boolean = false, val mockLocation: Boolean = false)
-internal enum class Screen { MARKET, SUBSCRIPTIONS, PROXY, SIM, PROFILE, WALLET }
+internal enum class Screen { SUBSCRIPTIONS, PROXY, SIM, PROFILE, WALLET }
 
 private val SuccessGreen = KunPalette.Success
 private val SuccessGreenContainer = KunPalette.SuccessSoft
