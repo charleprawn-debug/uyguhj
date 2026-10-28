@@ -317,7 +317,9 @@ internal fun MainShell(vm: AppViewModel) {
                 Screen.MARKET -> Marketplace(vm, padding)
                 Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding) { screen = Screen.MARKET }
                 Screen.PROXY -> FeatureGate(vm.access.vpn || vm.access.advanced, "لا يوجد اشتراك اتصال نشط") { ProxyScreen(padding) }
-                Screen.SIM -> FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") { SimScreen(padding) }
+                Screen.SIM -> FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") {
+                    SimScreen(padding, adbReady = true, onGoToAdb = {})
+                }
                 Screen.PROFILE -> ProfileScreen(vm, padding, onWallet = { screen = Screen.WALLET }, onPlans = { screen = Screen.SUBSCRIPTIONS })
                 Screen.WALLET -> WalletScreen(vm, padding)
             }
