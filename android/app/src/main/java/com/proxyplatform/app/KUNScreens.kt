@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -34,10 +33,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -65,14 +62,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
-import java.util.UUID
 
 @Composable
 internal fun AuthScreen(vm: AppViewModel) {
@@ -235,7 +232,13 @@ private fun AuthModeButton(label: String, selected: Boolean, modifier: Modifier 
 internal fun MainShell(vm: AppViewModel) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var screen by remember { mutableStateOf(Screen.SUBSCRIPTIONS) }
-    LaunchedEffect(Unit) { vm.loadPlansAndWallet() }
+    LaunchedEffect(Unit) {
+        vm.loadPlansAndWallet()
+        while (true) {
+            vm.updateWirelessState(withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) })
+            delay(1_500)
+        }
+    }
     LaunchedEffect(screen) {
         AdvancedOperationLog.info(context, "App navigation: ${screen.name}.")
         vm.clearError()
@@ -244,6 +247,7 @@ internal fun MainShell(vm: AppViewModel) {
             Screen.SUBSCRIPTIONS -> vm.loadSubscriptions()
             Screen.PROXY -> Unit
             Screen.SIM -> Unit
+            Screen.ADB -> Unit
             Screen.WALLET -> vm.loadPlansAndWallet()
         }
     }
@@ -252,6 +256,7 @@ internal fun MainShell(vm: AppViewModel) {
         Screen.SUBSCRIPTIONS -> "اشتراكاتي"
         Screen.PROXY -> "اتصال البروكسي"
         Screen.SIM -> "SIM"
+        Screen.ADB -> "ADB"
         Screen.PROFILE -> "حسابي"
         Screen.WALLET -> "المحفظة"
     }
@@ -259,6 +264,7 @@ internal fun MainShell(vm: AppViewModel) {
         Screen.SUBSCRIPTIONS -> "إدارة خططك الحالية"
         Screen.PROXY -> "إعداد اتصالك والتحكم فيه"
         Screen.SIM -> "اختبار خصائص المشغّل عبر ADB"
+        Screen.ADB -> "إعداد الاتصال اللاسلكي وإدارته"
         Screen.PROFILE -> "بيانات الحساب والتحقق"
         Screen.WALLET -> "الرصيد وسجل العمليات"
     }
@@ -289,6 +295,7 @@ internal fun MainShell(vm: AppViewModel) {
                 val entries = listOf(
                     Triple(Screen.SUBSCRIPTIONS, "الخطط", R.drawable.ic_nav_subscriptions),
                     Triple(Screen.PROXY, "الاتصال", R.drawable.ic_nav_proxy),
+                    Triple(Screen.ADB, "ADB", R.drawable.ic_nav_adb),
                     Triple(Screen.SIM, "SIM", R.drawable.ic_nav_sim),
                     Triple(Screen.PROFILE, "حسابي", R.drawable.ic_nav_profile),
                 )
@@ -313,8 +320,21 @@ internal fun MainShell(vm: AppViewModel) {
         Crossfade(targetState = screen, modifier = Modifier.fillMaxSize()) { destination ->
             when (destination) {
                 Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding)
-                Screen.PROXY -> FeatureGate(vm.access.vpn || vm.access.advanced, "لا يوجد اشتراك اتصال نشط") { ProxyScreen(padding) }
-                Screen.SIM -> FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") { SimScreen(padding) }
+                Screen.PROXY -> FeatureGate(vm.access.vpn || vm.access.advanced, "لا يوجد اشتراك اتصال نشط") { ProxyScreen(padding, vm.wirelessState == WirelessDebuggingManager.DebuggingState.READY) { screen = Screen.ADB } }
+                Screen.SIM -> {
+                    if (vm.wirelessState != WirelessDebuggingManager.DebuggingState.READY) {
+                        AdbRequiredPanel(
+                            modifier = Modifier.fillMaxSize().padding(padding),
+                            title = "إعدادات الشريحة",
+                            description = "تستخدم هذه الصفحة اتصال Wireless ADB المشترك لتنفيذ عمليات SIM بأمان.",
+                        ) { screen = Screen.ADB }
+                    } else {
+                        FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") {
+                            SimScreen(padding, adbReady = true) { screen = Screen.ADB }
+                        }
+                    }
+                }
+                Screen.ADB -> AdbScreen(vm, padding)
                 Screen.PROFILE -> ProfileScreen(vm, padding, onWallet = { screen = Screen.WALLET }, onPlans = { screen = Screen.SUBSCRIPTIONS })
                 Screen.WALLET -> WalletScreen(vm, padding)
             }

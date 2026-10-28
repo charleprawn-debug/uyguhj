@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -48,7 +47,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.proxyplatform.app.adb.PairingCodeInput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -63,14 +61,13 @@ private const val PREF_CARRIER_ID = "carrier_id"
 private const val PREF_CUSTOM_CARRIER = "custom_carrier"
 
 @Composable
-internal fun SimScreen(padding: PaddingValues) {
+internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () -> Unit) {
     val context = LocalContext.current
     val controller = remember(context) { SimOperatorController(context) }
     val uiPrefs = remember(context) { context.getSharedPreferences(SIM_UI_PREFS, Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
 
-    var adbState by remember { mutableStateOf(WirelessDebuggingManager.DebuggingState.NOT_PAIRED) }
     var simCards by remember { mutableStateOf(controller.readSimCards()) }
     var selectedSubId by remember { mutableIntStateOf(uiPrefs.getInt(PREF_SELECTED_SUB_ID, -1)) }
     var selectedCountryCode by remember { mutableStateOf(uiPrefs.getString(PREF_COUNTRY_CODE, "").orEmpty()) }
@@ -80,10 +77,9 @@ internal fun SimScreen(padding: PaddingValues) {
     var customCarrierName by remember { mutableStateOf(uiPrefs.getString(PREF_CUSTOM_CARRIER, "").orEmpty()) }
     var countryMenuExpanded by remember { mutableStateOf(false) }
     var carrierMenuExpanded by remember { mutableStateOf(false) }
-    var pairingCode by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    val connected = adbState == WirelessDebuggingManager.DebuggingState.READY
+    val connected = adbReady
     val selectedSim = simCards.firstOrNull { it.subscriptionId == selectedSubId } ?: simCards.firstOrNull()
     val selectedCarrier = SimNrfrPresets.carriers.firstOrNull { it.id == selectedCarrierId }
 
@@ -109,13 +105,11 @@ internal fun SimScreen(padding: PaddingValues) {
         return result.isSuccess
     }
 
-    fun refreshConnection() {
+    fun refreshSimData() {
         scope.launch {
             busy = true
-            val state = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
-            adbState = state
             simCards = controller.readSimCards()
-            if (state == WirelessDebuggingManager.DebuggingState.READY && !controller.hasSimCache && !controller.operationPending) {
+            if (adbReady && !controller.hasSimCache && !controller.operationPending) {
                 queueSimRefresh()
             }
             controller.consumeOperationMessage()?.let { message = it }
@@ -158,7 +152,17 @@ internal fun SimScreen(padding: PaddingValues) {
         }
         controller.consumeOperationMessage()?.let { message = it }
         if (controller.operationPending) message = "جاري تنفيذ العملية، يرجى الانتظار."
-        refreshConnection()
+        refreshSimData()
+    }
+
+    if (!adbReady) {
+        AdbRequiredPanel(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            title = "إعدادات الشريحة",
+            description = "تستخدم هذه الصفحة اتصال Wireless ADB المشترك لتنفيذ عمليات SIM بأمان.",
+            onGoToAdb = onGoToAdb,
+        )
+        return
     }
 
     LazyColumn(
@@ -174,96 +178,6 @@ internal fun SimScreen(padding: PaddingValues) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-            }
-        }
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            ) {
-                Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("Wireless ADB المدمج", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                            Text(adbStateLabel(adbState), color = if (connected) KunPalette.Success else KunPalette.Warning, style = MaterialTheme.typography.bodySmall)
-                        }
-                        TextButton(onClick = ::refreshConnection, enabled = !busy) { Text("تحديث") }
-                    }
-                    if (!connected) {
-                        Text(
-                            "فعّل خيارات المطوّر وWireless debugging، ثم افتح Pair device with pairing code وأدخل الرمز هنا.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        OutlinedButton(
-                            onClick = {
-                                runCatching { context.startActivity(WirelessDebuggingManager.getDebuggingSettingsIntent(context)) }
-                                    .onFailure {
-                                        message = "تعذر فتح خيارات المطوّر: ${it.message}"
-                                        SimOperationLog.error(context, message.orEmpty())
-                                                                    }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("فتح خيارات المطوّر") }
-                        when (adbState) {
-                            WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED -> {
-                                Button(
-                                    onClick = {
-                                        scope.launch {
-                                            busy = true
-                                            SimOperationLog.info(context, "طلب إعادة اتصال Wireless ADB من صفحة SIM.")
-                                            val success = withContext(Dispatchers.IO) { WirelessDebuggingManager.connect(context, 0) }
-                                            adbState = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
-                                            message = if (success) "أُعيد الاتصال بنجاح." else "تعذرت إعادة الاتصال؛ تحقق من Wi‑Fi وWireless debugging."
-                                            if (adbState == WirelessDebuggingManager.DebuggingState.READY && !controller.hasSimCache) queueSimRefresh()
-                                            busy = false
-                                                                            }
-                                    },
-                                    enabled = !busy,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) { Text("إعادة الاتصال") }
-                            }
-                            WirelessDebuggingManager.DebuggingState.NOT_PAIRED -> {
-                                OutlinedTextField(
-                                    value = pairingCode,
-                                    onValueChange = { pairingCode = PairingCodeInput.digitsOnly(it).take(6) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("رمز الاقتران — 6 أرقام") },
-                                    singleLine = true,
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                )
-                                Button(
-                                    onClick = {
-                                        val code = PairingCodeInput.normalize(pairingCode) ?: return@Button
-                                        scope.launch {
-                                            busy = true
-                                            pairingCode = ""
-                                            SimOperationLog.info(context, "بدء اقتران Wireless ADB؛ رمز الاقتران غير مسجل.")
-                                            val result = withContext(Dispatchers.IO) { WirelessDebuggingManager.pair(context, code) }
-                                            adbState = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
-                                            message = result.fold({ "اكتمل اقتران Wireless ADB." }, { "فشل الاقتران: ${it.message ?: it.javaClass.simpleName}" })
-                                            if (result.isSuccess && !controller.hasSimCache) queueSimRefresh()
-                                            busy = false
-                                                                            }
-                                    },
-                                    enabled = !busy && PairingCodeInput.normalize(pairingCode) != null,
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                    else Text("اقتران واتصال")
-                                }
-                            }
-                            else -> Unit
-                        }
-                    } else {
-                        Text("الجهاز متصل وجاهز.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
             }
         }
         item {
@@ -533,13 +447,4 @@ private fun InlineMessage(message: String) {
     Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
         Text(message, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Start)
     }
-}
-
-private fun adbStateLabel(state: WirelessDebuggingManager.DebuggingState): String = when (state) {
-    WirelessDebuggingManager.DebuggingState.UNSUPPORTED_ANDROID_VERSION -> "يلزم Android 11 أو أحدث"
-    WirelessDebuggingManager.DebuggingState.DEVELOPER_DISABLED -> "خيارات المطوّر غير مفعّلة"
-    WirelessDebuggingManager.DebuggingState.WIRELESS_DISABLED -> "Wireless debugging غير مفعّل"
-    WirelessDebuggingManager.DebuggingState.NOT_PAIRED -> "غير مقترن"
-    WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED -> "مقترن، لكن الاتصال غير نشط"
-    WirelessDebuggingManager.DebuggingState.READY -> "متصل وجاهز"
 }

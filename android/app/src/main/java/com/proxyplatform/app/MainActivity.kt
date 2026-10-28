@@ -14,7 +14,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -27,38 +26,26 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -80,9 +67,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.ViewModel
-import com.proxyplatform.app.adb.PairingCodeInput
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
@@ -132,7 +117,7 @@ internal data class WalletTransaction(val amount: Double, val description: Strin
 internal data class TopUpMethod(val code: String, val name: String, val currency: String, val network: String, val address: String, val minAmount: Double, val exchangeRate: Double, val instructions: String)
 internal data class TopUpRequest(val id: String, val methodCode: String, val amount: Double, val currency: String, val expectedUsd: Double, val reference: String, val status: String, val createdAt: String)
 internal data class FeatureAccess(val advanced: Boolean = false, val sim: Boolean = false, val vpn: Boolean = false, val mockLocation: Boolean = false)
-internal enum class Screen { SUBSCRIPTIONS, PROXY, SIM, PROFILE, WALLET }
+internal enum class Screen { SUBSCRIPTIONS, PROXY, SIM, ADB, PROFILE, WALLET }
 
 private val SuccessGreen = KunPalette.Success
 private val SuccessGreenContainer = KunPalette.SuccessSoft
@@ -285,6 +270,11 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     var topUpError by mutableStateOf<String?>(null); private set
     var topUpCreated by mutableStateOf<TopUpRequest?>(null); private set
     var access by mutableStateOf(FeatureAccess()); private set
+    var wirelessState by mutableStateOf(WirelessDebuggingManager.DebuggingState.NOT_PAIRED); private set
+
+    fun updateWirelessState(state: WirelessDebuggingManager.DebuggingState) {
+        wirelessState = state
+    }
 
     fun login(email: String, password: String) {
         loading = true
@@ -494,10 +484,10 @@ class MainActivity : ComponentActivity() {
 
 @Composable private fun ProxyPlatformApp(vm: AppViewModel) { CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) { Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { if (vm.loggedIn) MainShell(vm) else AuthScreen(vm) } } }
 // ─────────────────────────────────────────────────────────────────────────────
-// Proxy Screen — local proxy + embedded Wireless ADB flow
+// Proxy Screen — VPN and advanced local-proxy modes
 // ─────────────────────────────────────────────────────────────────────────────
 
-@Composable internal fun ProxyScreen(padding: PaddingValues) {
+@Composable internal fun ProxyScreen(padding: PaddingValues, wirelessReady: Boolean, onGoToAdb: () -> Unit) {
     val context = LocalContext.current
     val locationController = remember { ProxyLocationController(context) }
     DisposableEffect(Unit) { onDispose { locationController.close() } }
@@ -555,11 +545,6 @@ class MainActivity : ComponentActivity() {
                 .getBoolean("enabled", false)
         )
     }
-    var wirelessState by remember {
-        mutableStateOf(WirelessDebuggingManager.DebuggingState.NOT_PAIRED)
-    }
-    var showPairingNotificationOnGrant by remember { mutableStateOf(false) }
-
     fun hasNotificationPermission(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(
@@ -569,18 +554,8 @@ class MainActivity : ComponentActivity() {
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (showPairingNotificationOnGrant && granted) {
-            if (!NotificationManagerCompat.from(context).areNotificationsEnabled() ||
-                !WirelessDebuggingManager.showPairingNotification(context)
-            ) {
-                error = "الإشعارات متوقفة لهذا التطبيق؛ أدخل رمز الاقتران يدويًا من التطبيق."
-            }
-        } else if (showPairingNotificationOnGrant) {
-            error = "لم يُمنح إذن الإشعارات؛ أدخل رمز الاقتران يدويًا من التطبيق."
-        }
-        showPairingNotificationOnGrant = false
-    }
+    ) { }
+
 
     val coarseLocationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -600,29 +575,6 @@ class MainActivity : ComponentActivity() {
     fun ensureNotificationPermission() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission()) {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
-
-    fun ensurePairingNotification() {
-        if (hasNotificationPermission()) {
-            if (!NotificationManagerCompat.from(context).areNotificationsEnabled()) {
-                error = "إشعارات التطبيق متوقفة من إعدادات Android؛ استخدم إدخال الرمز اليدوي أو فعّل الإشعارات."
-            } else if (!WirelessDebuggingManager.showPairingNotification(context)) {
-                error = "تعذر عرض إشعار الاقتران؛ استخدم إدخال الرمز اليدوي."
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            showPairingNotificationOnGrant = true
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            error = "تعذر عرض الإشعار؛ استخدم إدخال رمز الاقتران اليدوي."
-        }
-    }
-
-    fun openDeveloperOptions() {
-        runCatching {
-            context.startActivity(WirelessDebuggingManager.getDebuggingSettingsIntent(context))
-        }.onFailure {
-            error = ProxyFailureMessages.settingsPage("خيارات المطوّر")
         }
     }
 
@@ -779,20 +731,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    LaunchedEffect(mode) {
-        if (mode == "advanced") {
-            while (true) {
-                val newWirelessState = withContext(Dispatchers.IO) {
-                    WirelessDebuggingManager.checkState(context)
-                }
-                if (newWirelessState != wirelessState) {
-                    AdvancedOperationLog.info(context, "حالة Wireless ADB: ${newWirelessState.name}.")
-                    wirelessState = newWirelessState
-                }
-                delay(1_000)
-            }
-        }
-    }
+
 
     fun startLocation() {
         if (!mockLocation) {
@@ -837,7 +776,7 @@ class MainActivity : ComponentActivity() {
         }.onFailure { onStatus(Result.failure(it)) }
     }
 
-    // ── Advanced mode: local proxy + embedded Wireless ADB ─────────────
+    // ── Advanced mode: local system proxy (shared ADB configured separately) ─
     fun launchAdvancedTunnel() {
         error = null
         starting = true
@@ -966,7 +905,8 @@ class MainActivity : ComponentActivity() {
     }
 
     fun requestStartAdvanced() {
-        if (wirelessState != WirelessDebuggingManager.DebuggingState.READY) {
+        val currentState = WirelessDebuggingManager.checkState(context)
+        if (!wirelessReady || currentState != WirelessDebuggingManager.DebuggingState.READY) {
             AdvancedOperationLog.error(context, "رُفض بدء الوضع المتقدم: اتصال Wireless ADB غير جاهز.")
             error = ProxyFailureMessages.connection(
                 advanced = true,
@@ -976,7 +916,6 @@ class MainActivity : ComponentActivity() {
         }
         launchAdvancedTunnel()
     }
-
     fun stopAdvanced() {
         if (stopping) return
         stopping = true
@@ -1193,6 +1132,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    if (mode == "advanced" && !wirelessReady) {
+        AdbRequiredPanel(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            title = "البروكسي المتقدم",
+            description = "يتطلب هذا الوضع اتصال Wireless ADB نشطًا قبل فتح إعدادات بروكسي النظام.",
+            onGoToAdb = onGoToAdb,
+        )
+        return
+    }
+
     Box(Modifier.fillMaxSize().padding(padding)) {
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -1254,132 +1203,7 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        // ── Advanced proxy setup (embedded Wireless ADB)
-        if (mode == "advanced") item {
-            var pairingCode by remember { mutableStateOf("") }
-            var pairing by remember { mutableStateOf(false) }
-            val scope = rememberCoroutineScope()
-
-            SetupStepCard(
-                stepNumber = 2,
-                title = "الوضع المتقدم: بروكسي النظام",
-                subtitle = "ADB مضمّن؛ يعمل مع التطبيقات التي تحترم بروكسي النظام، وقد تتجاوزه بعض التطبيقات.",
-                isComplete = wirelessState == WirelessDebuggingManager.DebuggingState.READY,
-                statusText = when (wirelessState) {
-                    WirelessDebuggingManager.DebuggingState.UNSUPPORTED_ANDROID_VERSION -> "Android 11 أو أحدث مطلوب"
-                    WirelessDebuggingManager.DebuggingState.DEVELOPER_DISABLED -> "وضع المطور معطل"
-                    WirelessDebuggingManager.DebuggingState.WIRELESS_DISABLED -> "التصحيح اللاسلكي معطل"
-                    WirelessDebuggingManager.DebuggingState.NOT_PAIRED -> "بانتظار رمز الاقتران"
-                    WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED -> "جارٍ الاتصال"
-                    WirelessDebuggingManager.DebuggingState.READY -> "جاهز"
-                }
-            ) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    when (wirelessState) {
-                        WirelessDebuggingManager.DebuggingState.UNSUPPORTED_ANDROID_VERSION -> {
-                            Text(
-                                "يتطلب الوضع المتقدم Android 11 أو أحدث لدعم التصحيح اللاسلكي المضمّن. استخدم وضع VPN بلمسة واحدة على هذا الجهاز.",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        WirelessDebuggingManager.DebuggingState.DEVELOPER_DISABLED -> {
-                            Text("الخطوة 1: فعّل خيارات المطور من إعدادات الهاتف.", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                            Button(onClick = { context.startActivity(Intent(Settings.ACTION_SETTINGS)) }, Modifier.fillMaxWidth()) { Text("فتح الإعدادات") }
-                        }
-                        WirelessDebuggingManager.DebuggingState.WIRELESS_DISABLED -> {
-                            Text("الخطوة 2: افتح خيارات المطوّر وفعّل Wireless debugging.", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                            Button(onClick = ::openDeveloperOptions, Modifier.fillMaxWidth()) { Text("فتح إعدادات التصحيح اللاسلكي") }
-                        }
-                        WirelessDebuggingManager.DebuggingState.NOT_PAIRED,
-                        WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED -> {
-                            Text(
-                                if (wirelessState == WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED)
-                                    "الاقتران محفوظ لكن اتصال ADB انقطع. جرّب إعادة الاتصال، أو أعد الاقتران إذا ألغيت الجهاز من إعدادات Android."
-                                else
-                                    "افتح Wireless debugging ثم Pair device with pairing code. أدخل الرمز من إشعار التطبيق أو اكتبه هنا يدويًا.",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                            OutlinedButton(
-                                onClick = ::openDeveloperOptions,
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = !pairing,
-                            ) { Text("فتح خيارات المطوّر") }
-                            OutlinedButton(
-                                onClick = ::ensurePairingNotification,
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = !pairing,
-                            ) { Text("إظهار إشعار إدخال رمز الاقتران") }
-                            OutlinedTextField(
-                                value = pairingCode,
-                                onValueChange = { value -> pairingCode = PairingCodeInput.digitsOnly(value).take(6) },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("رمز الاقتران (6 أرقام فقط)") },
-                                singleLine = true,
-                                enabled = !pairing,
-                                visualTransformation = PasswordVisualTransformation(),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
-                            Button(
-                                onClick = {
-                                    pairing = true
-                                    error = null
-                                    scope.launch {
-                                        val result = withContext(Dispatchers.IO) { WirelessDebuggingManager.pair(context, pairingCode) }
-                                        pairing = false
-                                        result.onSuccess {
-                                            pairingCode = ""
-                                            wirelessState = WirelessDebuggingManager.DebuggingState.READY
-                                            error = null
-                                        }.onFailure {
-                                            error = ProxyFailureMessages.pairing(it.message)
-                                            wirelessState = withContext(Dispatchers.IO) {
-                                                WirelessDebuggingManager.checkState(context)
-                                            }
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                enabled = pairingCode.length == 6 && !pairing
-                            ) {
-                                if (pairing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                                else Text("اقتران واتصال تلقائي")
-                            }
-                            if (wirelessState == WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED) {
-                                OutlinedButton(
-                                    onClick = {
-                                        pairing = true
-                                        error = null
-                                        scope.launch {
-                                            val connected = withContext(Dispatchers.IO) {
-                                                WirelessDebuggingManager.connect(context, 0)
-                                            }
-                                            pairing = false
-                                            if (connected) {
-                                                wirelessState = WirelessDebuggingManager.DebuggingState.READY
-                                            } else {
-                                                error = ProxyFailureMessages.pairing("Wireless debugging reconnect failed")
-                                                wirelessState = withContext(Dispatchers.IO) {
-                                                    WirelessDebuggingManager.checkState(context)
-                                                }
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    enabled = !pairing
-                                ) { Text(if (pairing) "جارٍ إعادة الاتصال…" else "إعادة الاتصال عبر ADB") }
-                            }
-                            Text("لا تدخل IP أو أي منفذ؛ سيتم اكتشافهما تلقائيًا.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        WirelessDebuggingManager.DebuggingState.READY -> {
-                            Text("تم الاقتران والاتصال عبر ADB المضمّن بنجاح.", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold, color = SuccessGreen)
-                            Text("يمكنك الآن تشغيل الوضع المتقدم.", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            }
-        }
-
+        // Advanced mode uses the shared Wireless ADB connection configured on the dedicated ADB page.
         if (mode == "advanced") item {
             KUNCard {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1549,7 +1373,7 @@ class MainActivity : ComponentActivity() {
     }
 
     val hasDetails = selectedSavedProxyId != null && host.isNotBlank() && port.isNotBlank()
-    val canConnect = hasDetails && (mode == "vpn" || wirelessState == WirelessDebuggingManager.DebuggingState.READY)
+    val canConnect = hasDetails && (mode == "vpn" || wirelessReady)
     Surface(
         modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().imePadding(),
         color = MaterialTheme.colorScheme.surface,
@@ -1592,48 +1416,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    }
-}
-
-@Composable private fun SetupStepCard(
-    stepNumber: Int,
-    title: String,
-    subtitle: String,
-    isComplete: Boolean,
-    statusText: String,
-    content: @Composable () -> Unit
-) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, if (isComplete) KunPalette.Success.copy(alpha = 0.35f) else KunPalette.Border),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(
-                        Modifier.size(34.dp).background(if (isComplete) SuccessGreen else MaterialTheme.colorScheme.primaryContainer, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(if (isComplete) "✓" else stepNumber.toString(), color = if (isComplete) Color.White else MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-                FeaturePill(
-                    statusText,
-                    color = if (isComplete) KunPalette.Success else KunPalette.Primary,
-                    container = if (isComplete) KunPalette.SuccessSoft else MaterialTheme.colorScheme.primaryContainer,
-                )
-            }
-            AnimatedVisibility(visible = !isComplete, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
-                Column { content() }
-            }
-        }
     }
 }
 
