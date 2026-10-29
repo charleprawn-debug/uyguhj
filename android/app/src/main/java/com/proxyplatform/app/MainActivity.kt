@@ -614,6 +614,7 @@ class MainActivity : ComponentActivity() {
     vpnAllowed: Boolean,
     advancedAllowed: Boolean,
     onGoToAdb: () -> Unit,
+    onOpenBrowser: (String, Int, String, String) -> Unit,
 ) {
     val context = LocalContext.current
     val locationController = remember { ProxyLocationController(context) }
@@ -1324,6 +1325,37 @@ class MainActivity : ComponentActivity() {
                 onSave = { saveProxyProfile(it) },
                 onDelete = { deleteProxyProfile(it) },
             )
+        }
+
+        item {
+            KUNCard {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("متصفح KUN", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (running) "يفتح المتصفح باستخدام اتصال KUN الحالي وإعدادات اللغة والمنطقة الزمنية للهاتف."
+                        else "شغّل اتصال VPN أو البروكسي المتقدم أولًا لتصفّح المواقع عبر البروكسي.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = {
+                            onOpenBrowser(
+                                mode,
+                                when (mode) {
+                                    "advanced" -> ProxyLocalService.localPort(context)
+                                    "vpn" -> ProxyVpnService.BROWSER_PROXY_PORT
+                                    else -> 0
+                                },
+                                java.util.Locale.getDefault().toLanguageTag(),
+                                java.util.TimeZone.getDefault().id,
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth().height(50.dp),
+                        enabled = running && !stopping,
+                        shape = RoundedCornerShape(16.dp),
+                    ) { Text("فتح المتصفح", fontWeight = FontWeight.Bold) }
+                }
+            }
         }
 
         // Advanced mode uses the shared Wireless ADB connection configured on the dedicated ADB page.

@@ -269,6 +269,7 @@ class ProxyVpnService : VpnService(), CommandServerHandler {
         const val EXTRA_PASSWORD = "password"
         const val EXTRA_MOCK_LOCATION_INBOUND = "include_mock_location_inbound"
         const val MOCK_LOCATION_PROXY_PORT = 10809
+        const val BROWSER_PROXY_PORT = 10810
         const val PREFS = "proxy_vpn_tun"
         const val KEY_RUNNING = "running"
         private const val KEY_ERROR = "last_error"

@@ -1,6 +1,7 @@
 name: Verify and Build
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -62,11 +63,18 @@ jobs:
       - name: Configure API endpoint
         run: echo "API_BASE_URL=${{ vars.API_BASE_URL || 'https://uyguhj.onrender.com/api/v1' }}" >> gradle.properties
       - run: chmod +x gradlew
-      - run: ./gradlew lintDebug testDebugUnitTest assembleDebug --no-daemon
+      - run: ./gradlew :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :browser:lintDebug :browser:testDebugUnitTest :browser:assembleDebug --no-daemon
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: proxy-platform-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload KUN Browser debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kun-browser-debug-apk
+          path: android/browser/build/outputs/apk/debug/browser-debug.apk
           if-no-files-found: error
           retention-days: 14

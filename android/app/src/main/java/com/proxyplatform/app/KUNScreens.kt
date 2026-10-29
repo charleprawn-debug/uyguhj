@@ -1,5 +1,7 @@
 package com.proxyplatform.app
 
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -307,6 +309,19 @@ internal fun MainShell(vm: AppViewModel) {
                         vpnAllowed = vm.access.vpn,
                         advancedAllowed = vm.access.advanced,
                         onGoToAdb = { screen = Screen.ADB },
+                        onOpenBrowser = { mode, localPort, language, timeZone ->
+                            val browserPackage = if (BuildConfig.DEBUG) "com.proxyplatform.browser.debug" else "com.proxyplatform.browser"
+                            val intent = Intent().setClassName(browserPackage, "com.proxyplatform.browser.BrowserLaunchActivity").apply {
+                                putExtra("kun.browser.proxy_mode", mode)
+                                putExtra("kun.browser.local_port", localPort)
+                                putExtra("kun.browser.language", language)
+                                putExtra("kun.browser.time_zone", timeZone)
+                            }
+                            runCatching { context.startActivity(intent) }
+                                .onFailure {
+                                    Toast.makeText(context, "ثبّت تطبيق KUN Browser ثم افتحه من هنا بعد تشغيل البروكسي.", Toast.LENGTH_LONG).show()
+                                }
+                        },
                     )
                 }
                 Screen.SIM -> AccountFeatureGate(

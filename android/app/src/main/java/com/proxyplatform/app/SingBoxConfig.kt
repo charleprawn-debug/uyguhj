@@ -100,6 +100,14 @@ object SingBoxConfig {
             .put("detour", "proxy")
 
         val tunInbounds = JSONArray()
+        // Browser companion traffic uses this local SOCKS endpoint even when
+        // Android VPN is active. If the VPN service stops, the listener closes
+        // and GeckoView cannot silently fall back to a direct connection.
+        tunInbounds.put(JSONObject()
+            .put("type", "mixed")
+            .put("tag", "browser-proxy-in")
+            .put("listen", "127.0.0.1")
+            .put("listen_port", ProxyVpnService.BROWSER_PROXY_PORT))
         if (includeMockLocationInbound) {
             tunInbounds.put(JSONObject()
                 .put("type", "mixed")
