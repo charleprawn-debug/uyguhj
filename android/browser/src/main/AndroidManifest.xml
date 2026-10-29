@@ -9,7 +9,7 @@
         android:icon="@drawable/ic_browser"
         android:roundIcon="@drawable/ic_browser"
         android:supportsRtl="true"
-        android:theme="@style/Theme.KunBrowser"
+        android:theme="@style/KunBrowserTheme"
         android:usesCleartextTraffic="false">
         <activity
             android:name=".BrowserActivity"
