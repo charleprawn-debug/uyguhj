@@ -500,7 +500,7 @@ private fun BrowserScreen(controller: BrowserController) {
                     TextButton(enabled = activeTab?.canGoBack == true, onClick = { controller.goBack() }) { Text("رجوع") }
                     TextButton(enabled = activeTab?.canGoForward == true, onClick = { controller.goForward() }) { Text("التالي") }
                     TextButton(onClick = { if (activeTab?.loading == true) controller.stop() else controller.reload() }) { Text(if (activeTab?.loading == true) "إيقاف" else "تحديث") }
-                    TextButton(onClick = { feedback = if (controller.addBookmark()) "أُضيفت العلامة" else "افتح صفحة أولًا") }) { Text("حفظ") }
+                    TextButton(onClick = { feedback = if (controller.addBookmark()) "أُضيفت العلامة" else "افتح صفحة أولًا" }) { Text("حفظ") }
                     TextButton(onClick = { showBookmarks = true }) { Text("المحفوظات") }
                     TextButton(onClick = { showMenu = true }) { Text("المزيد") }
                 }
