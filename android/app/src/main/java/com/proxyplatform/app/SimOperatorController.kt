@@ -381,6 +381,9 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
         return result
     }
 
+    // Called only by readSimCards while the instrumentation's shell identity
+    // is active; the app itself does not request READ_PHONE_STATE.
+    @SuppressLint("MissingPermission")
     private fun subscriptionIdForSlot(manager: SubscriptionManager, slotIndex: Int): Int? {
         val hiddenResult = runCatching {
             val method = SubscriptionManager::class.java.getDeclaredMethod("getSubId", Int::class.javaPrimitiveType)
