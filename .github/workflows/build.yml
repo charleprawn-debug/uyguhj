@@ -59,7 +59,7 @@ jobs:
         with:
           accept-android-sdk-licenses: true
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+        run: sdkmanager --channel=3 "platforms;android-35" "platforms;android-37.2" "build-tools;35.0.0" "build-tools;37.0.0"
       - name: Configure API endpoint
         run: echo "API_BASE_URL=${{ vars.API_BASE_URL || 'https://uyguhj.onrender.com/api/v1' }}" >> gradle.properties
       - run: chmod +x gradlew
