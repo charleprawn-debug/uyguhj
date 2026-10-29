@@ -335,6 +335,9 @@ class SimCarrierConfigInstrumentation : Instrumentation() {
         finish(resultCode, result)
     }
 
+    // Every call is made inside onCreate after UiAutomation adopts READ_PHONE_STATE
+    // as shell identity; the app itself does not use or request this permission.
+    @SuppressLint("MissingPermission")
     private fun readSimCards(service: CarrierConfigService): List<SimCardInfo> {
         val subscriptionManager = context.getSystemService(SubscriptionManager::class.java)
             ?: error("خدمة إدارة الشرائح غير متاحة.")
