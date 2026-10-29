@@ -1,5 +1,6 @@
 package com.proxyplatform.app
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,10 +19,16 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -172,6 +179,59 @@ internal fun KUNCard(
 }
 
 @Composable
+internal fun ExpandableDetails(
+    label: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by rememberSaveable(label) { mutableStateOf(false) }
+    Column(modifier.fillMaxWidth()) {
+        TextButton(onClick = { expanded = !expanded }, modifier = Modifier.align(Alignment.Start)) {
+            Text(if (expanded) "إخفاء التفاصيل" else label, fontWeight = FontWeight.SemiBold)
+        }
+        AnimatedVisibility(visible = expanded) {
+            Column(Modifier.fillMaxWidth(), content = content)
+        }
+    }
+}
+
+@Composable
+internal fun KUNPrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth().height(52.dp),
+    enabled: Boolean = true,
+    loading: Boolean = false,
+) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled && !loading,
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        if (loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White)
+        else Text(text, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+internal fun KUNSecondaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier.fillMaxWidth().height(50.dp),
+    enabled: Boolean = true,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Text(text, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
 internal fun StateCard(
     title: String,
     message: String,
@@ -208,7 +268,11 @@ internal fun StateCard(
             Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
             if (actionLabel != null && onAction != null) {
                 Spacer(Modifier.height(2.dp))
-                Button(onClick = onAction) { Text(actionLabel) }
+                KUNPrimaryButton(
+                    text = actionLabel,
+                    onClick = onAction,
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                )
             }
         }
     }

@@ -134,12 +134,22 @@ internal class SimOperatorController(context: Context) {
     fun consumeOperationMessage(): String? {
         recoverStaleOperationIfNeeded()
         val message = prefs.getString(SimCarrierPrefs.OUTCOME_MESSAGE, null) ?: return null
+        val success = prefs.getBoolean(SimCarrierPrefs.OUTCOME_SUCCESS, false)
         prefs.edit()
             .remove(SimCarrierPrefs.OUTCOME_MESSAGE)
             .remove(SimCarrierPrefs.OUTCOME_SUCCESS)
             .remove(SimCarrierPrefs.OUTCOME_TIME)
             .commit()
-        return message
+        if (success) return "نجح"
+        val reason = when {
+            message.contains("مهلة") || message.contains("لم يصل رد Instrumentation") -> "انتهت مهلة التنفيذ؛ لم يصل تأكيد من Android."
+            else -> message
+                .replace(Regex("^(?:فشلت عملية SIM عبر ADB|فشلت عملية CarrierConfig):\\s*"), "")
+                .replace(Regex("^تعذر بدء [^:]+:\\s*"), "")
+                .ifBlank { "تعذر إتمام العملية." }
+                .take(220)
+        }
+        return "فشل: $reason"
     }
 
     private fun queueInstrumentation(operation: String, arguments: Map<String, String>) {
@@ -166,9 +176,7 @@ internal class SimOperatorController(context: Context) {
         try {
             val output = WirelessDebuggingManager.executeCommandResult(appContext, command).getOrThrow()
             SimOperationLog.output(appContext, output.ifBlank { "اكتملت عملية Instrumentation دون مخرجات إضافية." })
-            check(instrumentationSucceeded(output)) {
-                "أعاد Android نتيجة Instrumentation غير ناجحة؛ راجع سجل العملية للتفاصيل."
-            }
+            check(instrumentationSucceeded(output)) { instrumentationFailureReason(output) }
             SimOperationLog.info(appContext, "اكتملت عملية $operation بنجاح عبر Wireless ADB المضمّن.")
         } catch (failure: Throwable) {
             saveOperationResult(
@@ -198,6 +206,16 @@ internal class SimOperatorController(context: Context) {
         // are incorrectly shown as failures in the SIM screen.
         return explicitFailure == null && !failedResult &&
             (statusCode == null || statusCode == 0 || (statusCode == Activity.RESULT_OK && reportedSuccess))
+    }
+
+    private fun instrumentationFailureReason(output: String): String {
+        val statusReason = Regex("(?m)^INSTRUMENTATION_STATUS: (?:Error|shortMsg|failure):\\s*(.+)$")
+            .find(output)?.groupValues?.getOrNull(1)?.trim()
+        if (!statusReason.isNullOrBlank()) return statusReason
+        val resultReason = Regex("(?m)^INSTRUMENTATION_RESULT:.*(?:shortMsg|Error)=(.+)$")
+            .find(output)?.groupValues?.getOrNull(1)?.trim()
+        if (!resultReason.isNullOrBlank()) return resultReason
+        return "رفض Android تنفيذ أمر SIM."
     }
 
     private fun recoverStaleOperationIfNeeded() {

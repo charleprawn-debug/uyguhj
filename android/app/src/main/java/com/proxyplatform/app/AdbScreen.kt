@@ -23,12 +23,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -149,7 +147,7 @@ internal fun AdbScreen(vm: AppViewModel, padding: PaddingValues) {
                         }
                     }
                     Text(
-                        "اربط الهاتف مرة واحدة؛ سيستخدم البروكسي المتقدم وصفحة SIM الاتصال نفسه تلقائيًا.",
+                        "إعداد اتصال ADB اللاسلكي للأدوات التي تحتاجه.",
                         color = Color.White.copy(alpha = 0.92f),
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -195,16 +193,16 @@ internal fun AdbScreen(vm: AppViewModel, padding: PaddingValues) {
                         }
                         WirelessDebuggingManager.DebuggingState.DEVELOPER_DISABLED -> {
                             AdbStep("1", "فعّل خيارات المطوّر", "من الإعدادات > حول الهاتف، اضغط رقم الإصدار عدة مرات حتى تظهر رسالة تفعيل خيارات المطوّر.")
-                            OutlinedButton(onClick = ::openDeveloperSettings, modifier = Modifier.fillMaxWidth()) { Text("فتح إعدادات الهاتف") }
+                            KUNSecondaryButton("فتح إعدادات الهاتف", ::openDeveloperSettings)
                         }
                         WirelessDebuggingManager.DebuggingState.WIRELESS_DISABLED -> {
                             AdbStep("1", "فعّل التصحيح اللاسلكي", "من خيارات المطوّر، فعّل Wireless debugging وأبقِ الهاتف على شبكة Wi‑Fi.")
-                            OutlinedButton(onClick = ::openDeveloperSettings, modifier = Modifier.fillMaxWidth()) { Text("فتح إعدادات التصحيح اللاسلكي") }
+                            KUNSecondaryButton("فتح إعدادات التصحيح اللاسلكي", ::openDeveloperSettings)
                         }
                         WirelessDebuggingManager.DebuggingState.NOT_PAIRED -> {
                             AdbStep("1", "افتح شاشة الاقتران", "من Wireless debugging اختر Pair device with pairing code.")
-                            OutlinedButton(onClick = ::openDeveloperSettings, modifier = Modifier.fillMaxWidth()) { Text("فتح إعدادات التصحيح اللاسلكي") }
-                            OutlinedButton(onClick = ::showPairingNotification, modifier = Modifier.fillMaxWidth()) { Text("إظهار إشعار إدخال الرمز") }
+                            KUNSecondaryButton("فتح إعدادات التصحيح اللاسلكي", ::openDeveloperSettings)
+                            KUNSecondaryButton("إظهار إشعار إدخال الرمز", ::showPairingNotification)
                             OutlinedTextField(
                                 value = pairingCode,
                                 onValueChange = { pairingCode = PairingCodeInput.digitsOnly(it).take(6) },
@@ -217,9 +215,10 @@ internal fun AdbScreen(vm: AppViewModel, padding: PaddingValues) {
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 shape = RoundedCornerShape(15.dp),
                             )
-                            Button(
+                            KUNPrimaryButton(
+                                text = "اقتران واتصال",
                                 onClick = {
-                                    val code = PairingCodeInput.normalize(pairingCode) ?: return@Button
+                                    val code = PairingCodeInput.normalize(pairingCode) ?: return@KUNPrimaryButton
                                     busy = true
                                     message = null
                                     scope.launch {
@@ -228,7 +227,7 @@ internal fun AdbScreen(vm: AppViewModel, padding: PaddingValues) {
                                         val latest = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
                                         vm.updateWirelessState(latest)
                                         message = result.fold(
-                                            { "اكتمل الاقتران واتصل ADB بنجاح. يمكنك الآن استخدام البروكسي المتقدم وSIM." },
+                                            { if (latest == WirelessDebuggingManager.DebuggingState.READY) "نجح الاقتران" else "فشل: لم يكتمل اتصال ADB بعد." },
                                             { ProxyFailureMessages.pairing(it.message) },
                                         )
                                         busy = false
@@ -236,15 +235,13 @@ internal fun AdbScreen(vm: AppViewModel, padding: PaddingValues) {
                                 },
                                 modifier = Modifier.fillMaxWidth().height(52.dp),
                                 enabled = !busy && PairingCodeInput.normalize(pairingCode) != null,
-                                shape = RoundedCornerShape(15.dp),
-                            ) {
-                                if (busy) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp, color = Color.White)
-                                else Text("اقتران واتصال تلقائي", fontWeight = FontWeight.Bold)
-                            }
+                                loading = busy,
+                            )
                         }
                         WirelessDebuggingManager.DebuggingState.PAIRED_NOT_CONNECTED -> {
                             AdbStep("1", "الاقتران محفوظ", "يبدو أن الاتصال انقطع. تأكد من بقاء Wireless debugging مفعّلًا وعلى الشبكة نفسها.")
-                            Button(
+                            KUNPrimaryButton(
+                                text = "إعادة الاتصال",
                                 onClick = {
                                     busy = true
                                     message = null
@@ -252,18 +249,15 @@ internal fun AdbScreen(vm: AppViewModel, padding: PaddingValues) {
                                         val connected = withContext(Dispatchers.IO) { WirelessDebuggingManager.connect(context, 0) }
                                         val latest = withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) }
                                         vm.updateWirelessState(latest)
-                                        message = if (connected && latest == WirelessDebuggingManager.DebuggingState.READY) "تمت إعادة الاتصال؛ الخدمات المشتركة أصبحت جاهزة." else "تعذرت إعادة الاتصال. تحقق من Wi‑Fi والتصحيح اللاسلكي ثم أعد المحاولة."
+                                        message = if (connected && latest == WirelessDebuggingManager.DebuggingState.READY) "نجح الاتصال" else "فشل: تحقق من اتصال Wi‑Fi وإعداد التصحيح اللاسلكي."
                                         busy = false
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth().height(52.dp),
                                 enabled = !busy,
-                                shape = RoundedCornerShape(15.dp),
-                            ) {
-                                if (busy) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp, color = Color.White)
-                                else Text("إعادة الاتصال تلقائيًا", fontWeight = FontWeight.Bold)
-                            }
-                            OutlinedButton(onClick = ::openDeveloperSettings, modifier = Modifier.fillMaxWidth(), enabled = !busy) { Text("فتح إعدادات التصحيح اللاسلكي") }
+                                loading = busy,
+                            )
+                            KUNSecondaryButton("فتح إعدادات التصحيح اللاسلكي", ::openDeveloperSettings, enabled = !busy)
                             OutlinedTextField(
                                 value = pairingCode,
                                 onValueChange = { pairingCode = PairingCodeInput.digitsOnly(it).take(6) },
@@ -276,9 +270,10 @@ internal fun AdbScreen(vm: AppViewModel, padding: PaddingValues) {
                                 shape = RoundedCornerShape(15.dp),
                             )
                             if (PairingCodeInput.normalize(pairingCode) != null) {
-                                OutlinedButton(
+                                KUNSecondaryButton(
+                                    text = "إعادة الاقتران بهذا الرمز",
                                     onClick = {
-                                        val code = PairingCodeInput.normalize(pairingCode) ?: return@OutlinedButton
+                                        val code = PairingCodeInput.normalize(pairingCode) ?: return@KUNSecondaryButton
                                         busy = true
                                         scope.launch {
                                             pairingCode = ""
@@ -289,36 +284,43 @@ internal fun AdbScreen(vm: AppViewModel, padding: PaddingValues) {
                                             busy = false
                                         }
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
                                     enabled = !busy,
-                                ) { Text("إعادة الاقتران بهذا الرمز") }
+                                )
                             }
                         }
                         WirelessDebuggingManager.DebuggingState.READY -> {
-                            AdbInfoNote("تم الاقتران والاتصال عبر ADB. هذه الجلسة مشتركة بين البروكسي المتقدم وصفحة SIM.")
-                            Text("لا حاجة إلى إدخال عنوان IP أو منفذ؛ يتولى التطبيق اكتشاف اتصال الهاتف تلقائيًا.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            AdbInfoNote("الاتصال جاهز. لا حاجة إلى إدخال عنوان IP أو منفذ.")
                         }
                     }
                     message?.let { text ->
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(14.dp),
-                            color = if (text.startsWith("اكتمل") || text.startsWith("تمت") || text.startsWith("تم ")) KunPalette.SuccessSoft else KunPalette.WarningSoft,
+                            color = if (text.startsWith("نجح") || text.startsWith("تمت") || text.startsWith("تم ")) KunPalette.SuccessSoft else KunPalette.ErrorSoft,
                         ) {
-                            Text(text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Text(text.lineSequence().firstOrNull().orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 2)
+                                if (text.contains('\n') || text.length > 100) {
+                                    ExpandableDetails("عرض التفاصيل") {
+                                        Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
             }
         }
         item {
-            Text(
-                "معلومة أمان: لا يحتفظ التطبيق برمز الاقتران في السجل. ألغِ اقتران التطبيق من إعدادات Android إذا لم تعد ترغب باستخدام ADB.",
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Start,
-            )
+            ExpandableDetails("معلومات الأمان واستخدام الاتصال") {
+                Text(
+                    "رمز الاقتران مؤقت ولا يُحفَظ في سجل التطبيق. الاتصال نفسه متاح للبروكسي المتقدم وSIM. ألغِ اقتران التطبيق من إعدادات Android عند التوقف عن استخدامه.",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Start,
+                )
+            }
         }
     }
 }
@@ -344,14 +346,8 @@ internal fun AdbRequiredPanel(
             Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 FeaturePill("ADB غير جاهز", color = KunPalette.Warning, container = KunPalette.WarningSoft)
                 Text("فعّل Wireless ADB أولًا", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                Text(
-                    "لا يمكن فتح هذه الصفحة بأمان قبل الاقتران والاتصال. انتقل إلى صفحة ADB لإكمال الإعداد أو إعادة الاتصال؛ ستعود هذه الصفحة للعمل تلقائيًا عند الجاهزية.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(onClick = onGoToAdb, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(15.dp)) {
-                    Text("الانتقال إلى صفحة ADB", fontWeight = FontWeight.Bold)
-                }
+                Text("أكمل الإعداد أو أعد الاتصال من صفحة ADB.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                KUNPrimaryButton("الانتقال إلى صفحة ADB", onGoToAdb)
             }
         }
     }

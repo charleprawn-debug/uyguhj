@@ -27,11 +27,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -175,27 +173,15 @@ internal fun AuthScreen(vm: AppViewModel) {
                         }
                     }
 
-                    Button(
+                    KUNPrimaryButton(
+                        text = if (register) "إنشاء الحساب" else "تسجيل الدخول",
                         onClick = {
                             if (register) vm.register(email, password, name) { register = false }
                             else vm.login(email, password)
                         },
                         enabled = !vm.loading && email.isNotBlank() && password.length >= 8 && (!register || name.isNotBlank()),
                         modifier = Modifier.fillMaxWidth().height(56.dp),
-                        shape = RoundedCornerShape(17.dp),
-                    ) {
-                        if (vm.loading) {
-                            androidx.compose.material3.CircularProgressIndicator(Modifier.size(21.dp), strokeWidth = 2.5.dp, color = Color.White)
-                        } else {
-                            Text(if (register) "إنشاء الحساب" else "تسجيل الدخول", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    Text(
-                        "تُستخدم بيانات الدخول للمصادقة مع الخدمة فقط.",
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelMedium,
-                        textAlign = TextAlign.Center,
+                        loading = vm.loading,
                     )
                 }
             }
@@ -236,19 +222,19 @@ internal fun MainShell(vm: AppViewModel) {
         vm.loadPlansAndWallet()
         while (true) {
             vm.updateWirelessState(withContext(Dispatchers.IO) { WirelessDebuggingManager.checkState(context) })
-            delay(1_500)
+            delay(3_000)
         }
     }
     LaunchedEffect(screen) {
         AdvancedOperationLog.info(context, "App navigation: ${screen.name}.")
         vm.clearError()
         when (screen) {
-            Screen.PROFILE -> { vm.loadProfile(); vm.loadPlansAndWallet() }
+            Screen.PROFILE -> vm.loadProfile()
             Screen.SUBSCRIPTIONS -> vm.loadSubscriptions()
             Screen.PROXY -> Unit
             Screen.SIM -> Unit
             Screen.ADB -> Unit
-            Screen.WALLET -> vm.loadPlansAndWallet()
+            Screen.WALLET -> { vm.loadPlansAndWallet(); vm.loadWalletDetails() }
         }
     }
 
@@ -260,15 +246,6 @@ internal fun MainShell(vm: AppViewModel) {
         Screen.PROFILE -> "حسابي"
         Screen.WALLET -> "المحفظة"
     }
-    val sectionDescription = when (screen) {
-        Screen.SUBSCRIPTIONS -> "إدارة خططك الحالية"
-        Screen.PROXY -> "إعداد اتصالك والتحكم فيه"
-        Screen.SIM -> "اختبار خصائص المشغّل عبر ADB"
-        Screen.ADB -> "إعداد الاتصال اللاسلكي وإدارته"
-        Screen.PROFILE -> "بيانات الحساب والتحقق"
-        Screen.WALLET -> "الرصيد وسجل العمليات"
-    }
-
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -281,10 +258,9 @@ internal fun MainShell(vm: AppViewModel) {
                     ) {
                         BrandMark(42.dp)
                         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                            Text("KUN Proxy", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
-                            Text(sectionDescription, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("KUN Proxy", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(sectionTitle, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold)
                         }
-                        FeaturePill(sectionTitle, color = KunPalette.Primary, container = MaterialTheme.colorScheme.primaryContainer)
                     }
                     Box(Modifier.fillMaxWidth().height(1.dp).background(KunPalette.Border))
                 }
@@ -320,18 +296,32 @@ internal fun MainShell(vm: AppViewModel) {
         Crossfade(targetState = screen, modifier = Modifier.fillMaxSize()) { destination ->
             when (destination) {
                 Screen.SUBSCRIPTIONS -> Subscriptions(vm, padding)
-                Screen.PROXY -> FeatureGate(vm.access.vpn || vm.access.advanced, "لا يوجد اشتراك اتصال نشط") { ProxyScreen(padding, vm.wirelessState == WirelessDebuggingManager.DebuggingState.READY) { screen = Screen.ADB } }
-                Screen.SIM -> {
+                Screen.PROXY -> AccountFeatureGate(
+                    vm = vm,
+                    allowed = vm.access.vpn || vm.access.advanced,
+                    onShowPlans = { screen = Screen.SUBSCRIPTIONS },
+                ) {
+                    ProxyScreen(
+                        padding = padding,
+                        wirelessReady = vm.wirelessState == WirelessDebuggingManager.DebuggingState.READY,
+                        vpnAllowed = vm.access.vpn,
+                        advancedAllowed = vm.access.advanced,
+                        onGoToAdb = { screen = Screen.ADB },
+                    )
+                }
+                Screen.SIM -> AccountFeatureGate(
+                    vm = vm,
+                    allowed = vm.access.sim,
+                    onShowPlans = { screen = Screen.SUBSCRIPTIONS },
+                ) {
                     if (vm.wirelessState != WirelessDebuggingManager.DebuggingState.READY) {
                         AdbRequiredPanel(
                             modifier = Modifier.fillMaxSize().padding(padding),
                             title = "إعدادات الشريحة",
-                            description = "تستخدم هذه الصفحة اتصال Wireless ADB المشترك لتنفيذ عمليات SIM بأمان.",
+                            description = "فعّل اتصال ADB أولًا للوصول إلى أدوات SIM.",
                         ) { screen = Screen.ADB }
                     } else {
-                        FeatureGate(vm.access.sim, "هذه الميزة غير موجودة في اشتراكك الحالي") {
-                            SimScreen(padding, adbReady = true) { screen = Screen.ADB }
-                        }
+                        SimScreen(padding, adbReady = true) { screen = Screen.ADB }
                     }
                 }
                 Screen.ADB -> AdbScreen(vm, padding)
@@ -353,7 +343,9 @@ internal fun Subscriptions(vm: AppViewModel, padding: PaddingValues) {
             PageHeading("حسابك", "باقات الاشتراك", "اختر الباقة المناسبة وفعّلها من رصيد محفظتك.")
         }
         if (vm.plansLoading && vm.plans.isEmpty()) item { StateCard("جارٍ تحميل الباقات", "نسترجع الباقات المتاحة.", loading = true) }
-        if (vm.plansError != null && vm.plans.isEmpty()) item { StateCard("تعذّر تحميل الباقات", vm.plansError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadPlansAndWallet() }) }
+        if (vm.plansError != null && vm.plans.isEmpty()) item { StateCard("تعذّر تحميل الباقات", vm.plansError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadPlansAndWallet(force = true) }) }
+        if (!vm.plansLoading && vm.plans.isEmpty() && vm.plansError == null) item { StateCard("لا توجد باقات متاحة", "عد لاحقًا أو حدّث القائمة.", actionLabel = "تحديث", onAction = { vm.loadPlansAndWallet(force = true) }) }
+        if (vm.activationError != null) item { StateCard("تعذّر تفعيل الباقة", vm.activationError.orEmpty(), error = true) }
         items(vm.plans, key = { it.id }) { plan -> PlanCard(plan, vm) }
         if (vm.subscriptions.isNotEmpty()) item { Text("اشتراكاتي النشطة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
         when {
@@ -453,8 +445,8 @@ internal fun ProfileScreen(vm: AppViewModel, padding: PaddingValues, onWallet: (
             }
         }
         item { Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = onWallet, modifier = Modifier.weight(1f).height(56.dp), shape = RoundedCornerShape(16.dp)) { Text("المحفظة", fontWeight = FontWeight.Bold) }
-            Button(onClick = onPlans, modifier = Modifier.weight(1f).height(56.dp), shape = RoundedCornerShape(16.dp)) { Text("الاشتراك", fontWeight = FontWeight.Bold) }
+            KUNPrimaryButton("المحفظة", onWallet, modifier = Modifier.weight(1f).height(52.dp))
+            KUNSecondaryButton("الخطط", onPlans, modifier = Modifier.weight(1f).height(52.dp))
         } }
         item {
             OutlinedButton(
@@ -474,8 +466,7 @@ private fun WalletCard(vm: AppViewModel, onTopUp: () -> Unit) {
             Column { Text("المحفظة", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text("الرصيد المتاح", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Text(vm.wallet?.let { "%.2f ${it.currency}".format(Locale.US, it.balance) } ?: "—", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = KunPalette.Primary)
         }
-        Button(onClick = onTopUp, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) { Text("شحن الرصيد", fontWeight = FontWeight.Bold) }
-        if (vm.walletTransactions.isNotEmpty()) { Text("آخر العمليات", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold); vm.walletTransactions.take(3).forEach { tx -> KeyValueRow(tx.description, "${if (tx.amount >= 0) "+" else ""}%.2f".format(Locale.US, tx.amount)) } }
+        KUNPrimaryButton("شحن الرصيد", onTopUp)
     } }
 }
 
@@ -487,7 +478,11 @@ private fun WalletScreen(vm: AppViewModel, padding: PaddingValues) {
     var referenceText by remember { mutableStateOf("") }
     LazyColumn(modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { PageHeading("حسابك", "المحفظة", "إدارة رصيدك ومراجعة جميع العمليات المالية.") }
+        if (vm.walletLoading && vm.wallet == null) item { StateCard("جارٍ تحميل الرصيد", "لحظة من فضلك.", loading = true) }
+        if (vm.walletError != null && vm.wallet == null) item { StateCard("تعذر تحميل الرصيد", vm.walletError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadPlansAndWallet(force = true) }) }
         item { WalletCard(vm) { topUpOpen = true; selectedMethod = null; amountText = ""; referenceText = "" } }
+        if (vm.walletDetailsLoading && vm.walletTransactions.isEmpty() && vm.topUpRequests.isEmpty()) item { StateCard("جارٍ تحميل السجل", "لحظة من فضلك.", loading = true) }
+        if (vm.walletDetailsError != null) item { StateCard("تعذر تحميل بعض التفاصيل", vm.walletDetailsError.orEmpty(), error = true, actionLabel = "إعادة المحاولة", onAction = { vm.loadWalletDetails(force = true) }) }
         if (topUpOpen) item {
             KUNCard { Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -501,7 +496,11 @@ private fun WalletScreen(vm: AppViewModel, padding: PaddingValues) {
                     vm.topUpMethods.forEach { method ->
                         FilterChip(selected = selectedMethod?.code == method.code, onClick = { selectedMethod = method; amountText = "" }, label = { Text(method.name) }, modifier = Modifier.fillMaxWidth(), enabled = method.address.isNotBlank())
                     }
-                    if (vm.topUpMethods.isEmpty()) Text("لا توجد طرق شحن مهيأة حاليًا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (vm.topUpMethods.isEmpty() && vm.walletDetailsLoading) {
+                        StateCard("جارٍ تحميل طرق الشحن", "لحظة من فضلك.", loading = true)
+                    } else if (vm.topUpMethods.isEmpty() && vm.walletDetailsError == null) {
+                        Text("لا توجد طرق شحن متاحة حاليًا.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     selectedMethod?.let { method ->
                         Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(16.dp)) {
                             Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -510,36 +509,67 @@ private fun WalletScreen(vm: AppViewModel, padding: PaddingValues) {
                                 if (method.network.isNotBlank()) Text("الشبكة: ${method.network}")
                                 Text("الحد الأدنى: ${method.minAmount} ${method.currency}")
                                 if (method.currency == "SYP") Text("سعر الصرف: 1 دولار = ${method.exchangeRate} ليرة سورية")
-                                if (method.instructions.isNotBlank()) Text(method.instructions, style = MaterialTheme.typography.bodySmall)
+                                if (method.instructions.isNotBlank()) ExpandableDetails("تعليمات إضافية") {
+                                    Text(method.instructions, style = MaterialTheme.typography.bodySmall)
+                                }
                             }
                         }
                         OutlinedTextField(amountText, { amountText = it }, Modifier.fillMaxWidth(), label = { Text("المبلغ الذي سترسله (${method.currency})") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), shape = RoundedCornerShape(15.dp))
                         val amount = amountText.toDoubleOrNull()
-                        if (method.currency == "SYP" && amount != null && method.exchangeRate > 0) Text("سيضاف تقريبًا: ${"%.2f".format(Locale.US, amount / method.exchangeRate)} USD", color = KunPalette.Primary, fontWeight = FontWeight.Bold)
-                        Button(onClick = { if (amount != null) vm.createTopUp(method, amount) }, enabled = amount != null && amount > 0 && !vm.topUpLoading, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(15.dp)) {
-                            if (vm.topUpLoading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("تم الإرسال — تحقق من العملية", fontWeight = FontWeight.Bold)
+                        if (amount != null && amount < method.minAmount) {
+                            Text("الحد الأدنى ${method.minAmount} ${method.currency}.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
+                        if (method.currency == "SYP" && amount != null && method.exchangeRate > 0) Text("سيضاف تقريبًا: ${"%.2f".format(Locale.US, amount / method.exchangeRate)} USD", color = KunPalette.Primary, fontWeight = FontWeight.Bold)
+                        KUNPrimaryButton("إنشاء طلب الشحن", onClick = { if (amount != null) vm.createTopUp(method, amount) }, enabled = amount != null && amount >= method.minAmount, loading = vm.topUpLoading)
                     }
                 } else {
                     Text("أدخل رقم العملية بعد إتمام التحويل.", style = MaterialTheme.typography.bodyMedium)
                     Text("المبلغ المحتسب: ${"%.2f".format(Locale.US, created.expectedUsd)} USD", fontWeight = FontWeight.Bold, color = KunPalette.Primary)
                     OutlinedTextField(referenceText, { referenceText = it }, Modifier.fillMaxWidth(), label = { Text("رقم العملية / Tx ID") }, singleLine = true, shape = RoundedCornerShape(15.dp))
-                    Button(onClick = { vm.verifyTopUp(created, referenceText.trim()) { } }, enabled = referenceText.trim().length >= 3 && !vm.topUpLoading, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(15.dp)) {
-                        if (vm.topUpLoading) CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp) else Text("تحقق من العملية", fontWeight = FontWeight.Bold)
-                    }
-                    Text("سيظهر الطلب في السجل بحالة قيد التحقق، ولن يضاف الرصيد أكثر من مرة لنفس رقم العملية.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    KUNPrimaryButton("إرسال للتحقق", onClick = { vm.verifyTopUp(created, referenceText.trim()) { } }, enabled = referenceText.trim().length >= 3, loading = vm.topUpLoading)
                 }
             } }
         }
-        item { Text("سجل العمليات", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-        if (vm.walletTransactions.isEmpty()) item { StateCard("لا توجد عمليات بعد", "ستظهر هنا عمليات الخصم والإضافة عند توفرها.") }
-        items(vm.walletTransactions) { tx -> KUNCard { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) { Column(Modifier.weight(1f)) { Text(tx.description, fontWeight = FontWeight.Bold); Text(readableDate(tx.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; Text("${if (tx.amount >= 0) "+" else ""}%.2f".format(Locale.US, tx.amount), fontWeight = FontWeight.ExtraBold, color = if (tx.amount >= 0) KunPalette.Success else KunPalette.Error) } } }
-        if (vm.topUpRequests.isNotEmpty()) item { Text("طلبات الشحن", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
-        items(vm.topUpRequests, key = { it.id }) { request ->
-            KUNCard { Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) { Text(request.methodCode, fontWeight = FontWeight.Bold); Text("${request.amount} ${request.currency} • ${"%.2f".format(Locale.US, request.expectedUsd)} USD", style = MaterialTheme.typography.bodySmall); Text(request.reference, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                FeaturePill(statusLabel(request.status), color = if (request.status == "verified") KunPalette.Success else if (request.status == "rejected") KunPalette.Error else KunPalette.Warning, container = if (request.status == "verified") KunPalette.SuccessSoft else if (request.status == "rejected") KunPalette.ErrorSoft else KunPalette.WarningSoft)
-            } }
+        item {
+            ExpandableDetails(
+                if (vm.walletDetailsLoading) "سجل العمليات" else "سجل العمليات والطلبات (${vm.walletTransactions.size + vm.topUpRequests.size})",
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (vm.walletDetailsLoading) {
+                        Text("جارٍ تحميل السجل…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else if (vm.walletTransactions.isEmpty() && vm.topUpRequests.isEmpty()) {
+                        Text("لا توجد عمليات بعد.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    vm.walletTransactions.forEach { tx ->
+                        KUNCard {
+                            Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(tx.description, fontWeight = FontWeight.Bold)
+                                    Text(readableDate(tx.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                Text("${if (tx.amount >= 0) "+" else ""}%.2f".format(Locale.US, tx.amount), fontWeight = FontWeight.ExtraBold, color = if (tx.amount >= 0) KunPalette.Success else KunPalette.Error)
+                            }
+                        }
+                    }
+                    vm.topUpRequests.forEach { request ->
+                        KUNCard {
+                            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(request.methodCode, fontWeight = FontWeight.Bold)
+                                        Text("${request.amount} ${request.currency} • ${"%.2f".format(Locale.US, request.expectedUsd)} USD", style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    FeaturePill(statusLabel(request.status), color = if (request.status == "verified") KunPalette.Success else if (request.status == "rejected") KunPalette.Error else KunPalette.Warning, container = if (request.status == "verified") KunPalette.SuccessSoft else if (request.status == "rejected") KunPalette.ErrorSoft else KunPalette.WarningSoft)
+                                }
+                                ExpandableDetails("تفاصيل الطلب") {
+                                    Text("رقم العملية: ${request.reference.ifBlank { "غير متوفر" }}", style = MaterialTheme.typography.bodySmall)
+                                    Text("تاريخ الطلب: ${readableDate(request.createdAt)}", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -548,18 +578,53 @@ private fun WalletScreen(vm: AppViewModel, padding: PaddingValues) {
 private fun PlanCard(plan: Plan, vm: AppViewModel) {
     Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(22.dp), border = BorderStroke(if (plan.featured) 2.dp else 1.dp, if (plan.featured) KunPalette.Primary else KunPalette.Border), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) { Column(Modifier.weight(1f)) { Text(plan.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); Text(plan.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }; if (plan.featured) FeaturePill("مميز", color = KunPalette.Primary, container = MaterialTheme.colorScheme.primaryContainer) }
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) { Text(plan.name, modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold); if (plan.featured) FeaturePill("مميز", color = KunPalette.Primary, container = MaterialTheme.colorScheme.primaryContainer) }
             Text(plan.monthly.ifBlank { "السعر غير محدد" }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, color = KunPalette.Primary)
-            Text("المدة: ${plan.duration}", style = MaterialTheme.typography.bodySmall)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { val labels = mapOf("advanced" to "الوضع المتقدم", "sim" to "SIM", "vpn" to "VPN", "mock_location" to "محاكاة الموقع"); plan.features.forEach { labels[it]?.let { label -> FeaturePill(label, color = KunPalette.Success, container = KunPalette.SuccessSoft) } } }
-            Button(onClick = { vm.activatePlan(plan) }, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(15.dp)) { Text("تفعيل من رصيد المحفظة", fontWeight = FontWeight.Bold) }
+            if (plan.description.isNotBlank() || plan.duration.isNotBlank()) ExpandableDetails("تفاصيل الخطة") {
+                if (plan.description.isNotBlank()) Text(plan.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (plan.duration.isNotBlank()) Text("المدة: ${plan.duration}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            KUNPrimaryButton(
+                text = "تفعيل من رصيد المحفظة",
+                onClick = { vm.activatePlan(plan) },
+                loading = vm.activatingPlanId == plan.id,
+                enabled = vm.activatingPlanId == null,
+            )
         }
     }
 }
 
 @Composable
-private fun FeatureGate(allowed: Boolean, message: String, content: @Composable () -> Unit) {
-    if (allowed) content() else LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) { item { StateCard("الميزة تحتاج اشتراكًا", message, actionLabel = "عرض الخطط", onAction = {}) } }
+private fun AccountFeatureGate(
+    vm: AppViewModel,
+    allowed: Boolean,
+    onShowPlans: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    when {
+        vm.accessLoaded && allowed -> content()
+        vm.accessLoaded -> Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+            StateCard(
+                title = "الاشتراك مطلوب",
+                message = "هذه الميزة غير متاحة في باقتك الحالية.",
+                actionLabel = "عرض الخطط",
+                onAction = onShowPlans,
+            )
+        }
+        vm.accessLoading -> Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+            StateCard("جارٍ التحقق من الاشتراك", "لحظة من فضلك.", loading = true)
+        }
+        else -> Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+            StateCard(
+                title = "تعذر التحقق من الاشتراك",
+                message = vm.accessError ?: "تحقق من اتصال الإنترنت ثم أعد المحاولة.",
+                error = true,
+                actionLabel = "إعادة المحاولة",
+                onAction = { vm.refreshAccess() },
+            )
+        }
+    }
 }
 
 private fun statusLabel(status: String): String = when (status.lowercase(Locale.ROOT)) {

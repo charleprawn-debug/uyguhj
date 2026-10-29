@@ -71,8 +71,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -270,7 +272,22 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     var topUpError by mutableStateOf<String?>(null); private set
     var topUpCreated by mutableStateOf<TopUpRequest?>(null); private set
     var access by mutableStateOf(FeatureAccess()); private set
+    var accessLoaded by mutableStateOf(false); private set
+    var accessLoading by mutableStateOf(false); private set
+    var accessError by mutableStateOf<String?>(null); private set
+    var walletLoading by mutableStateOf(false); private set
+    var walletError by mutableStateOf<String?>(null); private set
+    var walletDetailsLoading by mutableStateOf(false); private set
+    var walletDetailsError by mutableStateOf<String?>(null); private set
+    var activatingPlanId by mutableStateOf<String?>(null); private set
+    var activationError by mutableStateOf<String?>(null); private set
     var wirelessState by mutableStateOf(WirelessDebuggingManager.DebuggingState.NOT_PAIRED); private set
+
+    private var profileLoaded = false
+    private var subscriptionsLoaded = false
+    private var plansLoaded = false
+    private var walletLoaded = false
+    private var walletDetailsLoaded = false
 
     fun updateWirelessState(state: WirelessDebuggingManager.DebuggingState) {
         wirelessState = state
@@ -285,7 +302,6 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
                 withContext(Dispatchers.Main) {
                     loggedIn = true
                     loading = false
-                    loadMarket()
                 }
             } catch (failure: Exception) {
                 withContext(Dispatchers.Main) {
@@ -314,11 +330,6 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
                 }
             }
         }
-    }
-
-    fun loadMarket() = viewModelScope.launch {
-        loadMarketplaceProviders()
-        loadRemoteProxies()
     }
 
     fun loadMarketplaceProviders() = viewModelScope.launch {
@@ -392,12 +403,13 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     fun clearPurchaseError() { purchaseError = null }
     fun closePurchase() { purchaseOptions = null; purchaseError = null; purchaseQuote = null; purchasedProxy = null }
 
-    fun loadProfile() = viewModelScope.launch {
-        if (profileLoading) return@launch
+    fun loadProfile(force: Boolean = false) = viewModelScope.launch {
+        if (profileLoading || (profileLoaded && !force)) return@launch
         profileLoading = true
         profileError = null
         try {
             profile = withContext(Dispatchers.IO) { api.profile() }
+            profileLoaded = true
         } catch (failure: Exception) {
             profileError = failure.message ?: "تعذر تحميل بيانات الحساب. أعد المحاولة."
         } finally {
@@ -405,12 +417,13 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    fun loadSubscriptions() = viewModelScope.launch {
-        if (subscriptionsLoading) return@launch
+    fun loadSubscriptions(force: Boolean = false) = viewModelScope.launch {
+        if (subscriptionsLoading || (subscriptionsLoaded && !force)) return@launch
         subscriptionsLoading = true
         subscriptionsError = null
         try {
             subscriptions = withContext(Dispatchers.IO) { api.subscriptions() }
+            subscriptionsLoaded = true
         } catch (failure: Exception) {
             subscriptionsError = failure.message ?: "تعذر تحميل الاشتراكات. أعد المحاولة."
         } finally {
@@ -418,26 +431,103 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
         }
     }
 
-    fun loadPlansAndWallet() = viewModelScope.launch {
-        plansLoading = true; plansError = null
+    fun loadPlansAndWallet(force: Boolean = false) = viewModelScope.launch {
+        if (!force && plansLoaded && walletLoaded && accessLoaded) return@launch
+        val shouldLoadPlans = !plansLoaded || force
+        val shouldLoadWallet = !walletLoaded || force
+        val shouldLoadAccess = !accessLoaded || force
+        plansLoading = shouldLoadPlans
+        walletLoading = shouldLoadWallet
+        accessLoading = shouldLoadAccess
+        if (shouldLoadPlans) plansError = null
+        if (shouldLoadWallet) walletError = null
+        if (shouldLoadAccess) accessError = null
+        supervisorScope {
+            if (shouldLoadPlans) launch(Dispatchers.IO) {
+                val result = runCatching { api.plans() }
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { plans = it; plansLoaded = true }
+                        .onFailure { plansError = it.message ?: "تعذر تحميل الخطط." }
+                    plansLoading = false
+                }
+            }
+            if (shouldLoadWallet) launch(Dispatchers.IO) {
+                val result = runCatching { api.wallet() }
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { wallet = it; walletLoaded = true }
+                        .onFailure { walletError = it.message ?: "تعذر تحميل الرصيد." }
+                    walletLoading = false
+                }
+            }
+            if (shouldLoadAccess) launch(Dispatchers.IO) {
+                val result = runCatching { api.featureAccess() }
+                withContext(Dispatchers.Main) {
+                    result.onSuccess { access = it; accessLoaded = true }
+                        .onFailure { accessError = it.message ?: "تعذر التحقق من صلاحيات الحساب." }
+                    accessLoading = false
+                }
+            }
+        }
+    }
+
+    fun refreshAccess() = viewModelScope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.Main) { accessLoading = true; accessError = null }
         try {
-            val result = withContext(Dispatchers.IO) { listOf(api.plans(), api.wallet(), api.walletTransactions(), api.topUpMethods(), api.topUpRequests()) }
-            @Suppress("UNCHECKED_CAST")
-            plans = result[0] as List<Plan>; wallet = result[1] as Wallet; walletTransactions = result[2] as List<WalletTransaction>; topUpMethods = result[3] as List<TopUpMethod>; topUpRequests = result[4] as List<TopUpRequest>
-            access = withContext(Dispatchers.IO) { api.featureAccess() }
-        } catch (failure: Exception) { plansError = failure.message ?: "تعذر تحميل الخطط والمحفظة." } finally { plansLoading = false }
+            val result = api.featureAccess()
+            withContext(Dispatchers.Main) { access = result; accessLoaded = true }
+        } catch (failure: Exception) {
+            withContext(Dispatchers.Main) { accessError = failure.message ?: "تعذر التحقق من صلاحيات الحساب." }
+        } finally {
+            withContext(Dispatchers.Main) { accessLoading = false }
+        }
+    }
+
+    fun loadWalletDetails(force: Boolean = false) = viewModelScope.launch {
+        if (walletDetailsLoading || (walletDetailsLoaded && !force)) return@launch
+        walletDetailsLoading = true
+        walletDetailsError = null
+        try {
+            val (transactionsResult, methodsResult, requestsResult) = withContext(Dispatchers.IO) {
+                supervisorScope {
+                    val transactionsCall = async { runCatching { api.walletTransactions() } }
+                    val methodsCall = async { runCatching { api.topUpMethods() } }
+                    val requestsCall = async { runCatching { api.topUpRequests() } }
+                    Triple(transactionsCall.await(), methodsCall.await(), requestsCall.await())
+                }
+            }
+            transactionsResult.onSuccess { walletTransactions = it }
+            methodsResult.onSuccess { topUpMethods = it }
+            requestsResult.onSuccess { topUpRequests = it }
+            walletDetailsLoaded = transactionsResult.isSuccess && methodsResult.isSuccess && requestsResult.isSuccess
+            walletDetailsError = listOfNotNull(
+                transactionsResult.exceptionOrNull()?.message,
+                methodsResult.exceptionOrNull()?.message,
+                requestsResult.exceptionOrNull()?.message,
+            ).firstOrNull()
+        } finally {
+            walletDetailsLoading = false
+        }
     }
 
     fun createTopUp(method: TopUpMethod, amount: Double) = viewModelScope.launch {
         topUpLoading = true; topUpError = null
-        try { topUpCreated = withContext(Dispatchers.IO) { api.createTopUp(method.code, amount) }; topUpRequests = withContext(Dispatchers.IO) { api.topUpRequests() } }
+        try {
+            topUpCreated = withContext(Dispatchers.IO) { api.createTopUp(method.code, amount) }
+            loadWalletDetails(force = true)
+        }
         catch (failure: Exception) { topUpError = failure.message ?: "تعذر إنشاء طلب الشحن." }
         finally { topUpLoading = false }
     }
 
     fun verifyTopUp(request: TopUpRequest, reference: String, done: () -> Unit) = viewModelScope.launch {
         topUpLoading = true; topUpError = null
-        try { withContext(Dispatchers.IO) { api.verifyTopUp(request.id, reference) }; topUpCreated = null; topUpRequests = withContext(Dispatchers.IO) { api.topUpRequests() }; done() }
+        try {
+            withContext(Dispatchers.IO) { api.verifyTopUp(request.id, reference) }
+            topUpCreated = null
+            loadWalletDetails(force = true)
+            loadPlansAndWallet(force = true)
+            done()
+        }
         catch (failure: Exception) { topUpError = failure.message ?: "تعذر إرسال عملية التحقق." }
         finally { topUpLoading = false }
     }
@@ -445,8 +535,25 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
     fun clearTopUp() { topUpCreated = null; topUpError = null }
 
     fun activatePlan(plan: Plan) = viewModelScope.launch {
-        try { withContext(Dispatchers.IO) { api.activatePlan(plan.id) }; loadPlansAndWallet(); loadSubscriptions() }
-        catch (failure: Exception) { plansError = failure.message ?: "تعذر تفعيل الخطة. تحقق من رصيد المحفظة." }
+        if (activatingPlanId != null) return@launch
+        activatingPlanId = plan.id
+        activationError = null
+        try {
+            withContext(Dispatchers.IO) { api.activatePlan(plan.id) }
+            access = access.copy(
+                advanced = access.advanced || "advanced" in plan.features,
+                sim = access.sim || "sim" in plan.features,
+                vpn = access.vpn || "vpn" in plan.features,
+                mockLocation = access.mockLocation || "mock_location" in plan.features,
+            )
+            accessLoaded = true
+            loadPlansAndWallet(force = true)
+            loadSubscriptions(force = true)
+        } catch (failure: Exception) {
+            activationError = failure.message ?: "تعذر تفعيل الخطة. تحقق من رصيد المحفظة."
+        } finally {
+            activatingPlanId = null
+        }
     }
 
     fun logout() {
@@ -460,6 +567,20 @@ internal class AppViewModel(private val api: ApiClient) : ViewModel() {
         subscriptions = emptyList()
         subscriptionsError = null
         plans = emptyList(); wallet = null; walletTransactions = emptyList(); topUpMethods = emptyList(); topUpRequests = emptyList(); topUpCreated = null; access = FeatureAccess(); plansError = null; topUpError = null
+        profileLoaded = false
+        subscriptionsLoaded = false
+        plansLoaded = false
+        walletLoaded = false
+        walletDetailsLoaded = false
+        accessLoaded = false
+        accessLoading = false
+        accessError = null
+        walletLoading = false
+        walletError = null
+        walletDetailsLoading = false
+        walletDetailsError = null
+        activationError = null
+        activatingPlanId = null
         error = null
     }
 
@@ -487,17 +608,27 @@ class MainActivity : ComponentActivity() {
 // Proxy Screen — VPN and advanced local-proxy modes
 // ─────────────────────────────────────────────────────────────────────────────
 
-@Composable internal fun ProxyScreen(padding: PaddingValues, wirelessReady: Boolean, onGoToAdb: () -> Unit) {
+@Composable internal fun ProxyScreen(
+    padding: PaddingValues,
+    wirelessReady: Boolean,
+    vpnAllowed: Boolean,
+    advancedAllowed: Boolean,
+    onGoToAdb: () -> Unit,
+) {
     val context = LocalContext.current
     val locationController = remember { ProxyLocationController(context) }
     DisposableEffect(Unit) { onDispose { locationController.close() } }
 
     // "vpn" = recommended one-tap mode (single system dialog, no Shizuku).
     // "advanced" = original local-proxy mode for users who want no VPN icon.
-    var mode by remember {
+    var mode by remember(vpnAllowed, advancedAllowed) {
         mutableStateOf(
-            if (ProxyLocalService.isRunning(context) || AdvancedSystemProxy.hasPendingRestore(context))
-                "advanced" else "vpn"
+            when {
+                (ProxyLocalService.isRunning(context) || AdvancedSystemProxy.hasPendingRestore(context)) && advancedAllowed -> "advanced"
+                vpnAllowed -> "vpn"
+                advancedAllowed -> "advanced"
+                else -> "vpn"
+            }
         )
     }
 
@@ -1136,7 +1267,7 @@ class MainActivity : ComponentActivity() {
         AdbRequiredPanel(
             modifier = Modifier.fillMaxSize().padding(padding),
             title = "البروكسي المتقدم",
-            description = "يتطلب هذا الوضع اتصال Wireless ADB نشطًا قبل فتح إعدادات بروكسي النظام.",
+            description = "اتصل عبر صفحة ADB للمتابعة.",
             onGoToAdb = onGoToAdb,
         )
         return
@@ -1152,38 +1283,30 @@ class MainActivity : ComponentActivity() {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("طريقة الاتصال", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    ModeOptionCard(
-                        title = "VPN",
-                        subtitle = "إعداد سريع ومُوصى به",
-                        selected = mode == "vpn",
-                        enabled = !running && !starting && !checkingEndpoint,
-                        modifier = Modifier.weight(1f),
-                        onClick = { mode = "vpn"; error = null },
-                    )
-                    ModeOptionCard(
-                        title = "متقدم",
-                        subtitle = "بروكسي النظام عبر ADB",
-                        selected = mode == "advanced",
-                        enabled = !running && !starting && !checkingEndpoint,
-                        modifier = Modifier.weight(1f),
-                        onClick = { mode = "advanced"; error = null },
+                if (vpnAllowed && advancedAllowed) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        ModeOptionCard("VPN", "اتصال آمن", mode == "vpn", !running && !starting && !checkingEndpoint, Modifier.weight(1f)) { mode = "vpn"; error = null }
+                        ModeOptionCard("متقدم", "بروكسي النظام عبر ADB", mode == "advanced", !running && !starting && !checkingEndpoint, Modifier.weight(1f)) { mode = "advanced"; error = null }
+                    }
+                } else if (vpnAllowed) {
+                    ModeOptionCard("VPN", "اتصال آمن", true, !running && !starting && !checkingEndpoint, Modifier.fillMaxWidth()) { mode = "vpn"; error = null }
+                } else {
+                    ModeOptionCard("متقدم", "بروكسي النظام عبر ADB", true, !running && !starting && !checkingEndpoint, Modifier.fillMaxWidth()) { mode = "advanced"; error = null }
+                }
+                ExpandableDetails("معلومات الاتصال") {
+                    Text(
+                        if (mode == "vpn") "اتصال VPN يبدأ بعد موافقة Android؛ لا يتطلب إعداد المطوّر."
+                        else "يتطلب الوضع المتقدم اتصال Wireless ADB، ويعمل مع التطبيقات التي تحترم بروكسي النظام.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                Text(
-                    if (mode == "vpn")
-                        "اضغط اتصال ووافق على نافذة Android الوحيدة — من دون إعدادات مطوّر أو تطبيقات إضافية."
-                    else
-                        "يتطلب إعداد التصحيح اللاسلكي مرة واحدة، ويعمل مع التطبيقات التي تحترم بروكسي النظام.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
                 if (mode == "vpn") {
                     Text(
                         if (protocol == "socks5")
-                            "WebRTC / UDP: يمر عبر SOCKS5 داخل نفق VPN. نتحقق أولًا من UDP ASSOCIATE، ولا نسمح بمسار مباشر بديل."
+                            "SOCKS5: يُفحص دعم UDP قبل الاتصال."
                         else
-                            "بروكسي HTTP لا ينقل UDP الخاص بـ WebRTC؛ اختر SOCKS5 يدعم UDP إذا أردت مكالمات WebRTC عبر البروكسي.",
+                            "HTTP لا ينقل UDP لمكالمات WebRTC؛ استخدم SOCKS5 يدعم UDP.",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (protocol == "socks5") MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
                     )
@@ -1226,16 +1349,13 @@ class MainActivity : ComponentActivity() {
                             fontWeight = FontWeight.Bold,
                         )
                     }
-                    Text(
-                        "عند الاتصال، يحدد التطبيق المنطقة الزمنية لبلد خروج البروكسي عبر اتصال البروكسي ويطبقها على الهاتف. تُحفظ منطقتك الزمنية الحالية وإعداد الضبط التلقائي وتُستعاد عند إيقاف البروكسي.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        "تُرسل خدمة تحديد الموقع طلب GeoIP إلى ipwho.is عبر البروكسي المختار. عند تفعيل مطابقة اللغة سيغيّر التطبيق لغة الهاتف كاملة عبر ADB ويحفظها لاستعادتها عند الإيقاف.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    ExpandableDetails("تفاصيل تغيير المنطقة الزمنية") {
+                        Text(
+                            "تُحدد المنطقة الزمنية من بلد خروج البروكسي عبر GeoIP، وتُستعاد إعدادات الهاتف السابقة عند الإيقاف.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         androidx.compose.material3.Checkbox(
                             checked = matchProxyLanguage,
@@ -1249,11 +1369,13 @@ class MainActivity : ComponentActivity() {
                         )
                         Text("تعديل لغة الهاتف بما يناسب البروكسي", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     }
-                    Text(
-                        "يحدد اللغة تلقائيًا من دولة خروج البروكسي، ويطبّقها على الهاتف والتطبيقات عبر Wireless ADB. يجب إبقاء اتصال ADB جاهزًا، وقد تعيد بعض التطبيقات إنشاء واجهتها.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    ExpandableDetails("تفاصيل تغيير اللغة") {
+                        Text(
+                            "تُحدد اللغة من دولة خروج البروكسي وتُطبّق على الهاتف عبر Wireless ADB. احرص على بقاء ADB متصلًا؛ قد تعيد بعض التطبيقات فتح واجهتها.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }
@@ -1285,11 +1407,6 @@ class MainActivity : ComponentActivity() {
                     }
                     if (mockLocation) {
                         Text(
-                            "خطوة الإعداد: افتح خيارات المطوّر ← اختيار تطبيق الموقع الوهمي ← Proxy Platform. Android يطلب اختيار التطبيق يدويًا ولا يسمح للتطبيق بتجاوز شاشة الاختيار.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Text(
                             mockLocationStatus,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.SemiBold,
@@ -1306,46 +1423,50 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Text(if (mockLocationAuthorized == true) "إعادة التحقق من اختيار التطبيق" else "اختيار تطبيق الموقع الوهمي")
                         }
-                        Text(
-                            "عند الاتصال سيطلب Android إذن الموقع التقريبي فقط لإرسال الموقع الوهمي إلى Google Maps؛ التطبيق لا يقرأ موقعك الحقيقي ولا يطلب موقعًا دقيقًا.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        ExpandableDetails("إعداد وخصوصية الموقع") {
+                            Text(
+                                "من خيارات المطوّر اختر تطبيق الموقع الوهمي ثم Proxy Platform. Android يتطلب هذا الاختيار يدويًا. يطلب التطبيق إذن الموقع التقريبي لتسليم الموقع الوهمي، ولا يقرأ موقعك الحقيقي.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = locationMode == "auto",
-                            onClick = { locationMode = "auto" },
-                            label = { Text("تلقائي") },
-                            enabled = !running && !starting && !checkingEndpoint && !stopping,
-                        )
-                        FilterChip(
-                            selected = locationMode == "manual",
-                            onClick = { locationMode = "manual" },
-                            label = { Text("يدوي") },
-                            enabled = !running && !starting && !checkingEndpoint && !stopping,
-                        )
-                    }
-                    if (locationMode == "manual") {
+                    if (mockLocation) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedTextField(
-                                value = latitude,
-                                onValueChange = { latitude = it },
-                                modifier = Modifier.weight(1f),
-                                label = { Text("خط العرض") },
-                                singleLine = true,
+                            FilterChip(
+                                selected = locationMode == "auto",
+                                onClick = { locationMode = "auto" },
+                                label = { Text("تلقائي") },
                                 enabled = !running && !starting && !checkingEndpoint && !stopping,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             )
-                            OutlinedTextField(
-                                value = longitude,
-                                onValueChange = { longitude = it },
-                                modifier = Modifier.weight(1f),
-                                label = { Text("خط الطول") },
-                                singleLine = true,
+                            FilterChip(
+                                selected = locationMode == "manual",
+                                onClick = { locationMode = "manual" },
+                                label = { Text("يدوي") },
                                 enabled = !running && !starting && !checkingEndpoint && !stopping,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             )
+                        }
+                        if (locationMode == "manual") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = latitude,
+                                    onValueChange = { latitude = it },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("خط العرض") },
+                                    singleLine = true,
+                                    enabled = !running && !starting && !checkingEndpoint && !stopping,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                )
+                                OutlinedTextField(
+                                    value = longitude,
+                                    onValueChange = { longitude = it },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("خط الطول") },
+                                    singleLine = true,
+                                    enabled = !running && !starting && !checkingEndpoint && !stopping,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                )
+                            }
                         }
                     }
                 }
@@ -1357,11 +1478,7 @@ class MainActivity : ComponentActivity() {
                 AdvancedProxyTimezoneController.hasPendingRestore(context))
         ) item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "توجد جلسة متقدمة سابقة لم تكتمل استعادة إعداداتها. أعد اتصال ADB ثم استعد المنطقة الزمنية والبروكسي قبل بدء جلسة جديدة.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("جلسة سابقة تحتاج إلى استعادة الإعدادات.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedButton(
                     onClick = ::stopAdvanced,
                     enabled = !stopping,
@@ -1386,7 +1503,17 @@ class MainActivity : ComponentActivity() {
         ) {
             AnimatedVisibility(visible = error != null, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                 Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(13.dp)) {
-                    Text(error.orEmpty(), Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall, maxLines = 8)
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text(
+                            error.orEmpty().lineSequence().firstOrNull().orEmpty(),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                        )
+                        ExpandableDetails("تفاصيل المشكلة") {
+                            Text(error.orEmpty(), color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
             }
             Button(

@@ -16,10 +16,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -79,6 +78,7 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
     var carrierMenuExpanded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var showResetConfirmation by remember { mutableStateOf(false) }
     val connected = adbReady
     val selectedSim = simCards.firstOrNull { it.subscriptionId == selectedSubId } ?: simCards.firstOrNull()
     val selectedCarrier = SimNrfrPresets.carriers.firstOrNull { it.id == selectedCarrierId }
@@ -98,9 +98,9 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
         val result = withContext(Dispatchers.IO) { controller.refreshSimCards() }
         result.onSuccess {
             simCards = controller.readSimCards()
-            message = "تم تحديث قائمة الشرائح."
+            message = "تم التحديث"
         }.onFailure {
-            message = "تعذّر تحديث الشرائح: ${it.message ?: it.javaClass.simpleName}"
+            message = "فشل: ${it.message ?: it.javaClass.simpleName}"
         }
         return result.isSuccess
     }
@@ -151,7 +151,7 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
             persistUiState()
         }
         controller.consumeOperationMessage()?.let { message = it }
-        if (controller.operationPending) message = "جاري تنفيذ العملية، يرجى الانتظار."
+        if (controller.operationPending) message = "جارٍ التنفيذ…"
         refreshSimData()
     }
 
@@ -206,7 +206,7 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
                         ) { Text("تحديث الشرائح") }
                     }
                     if (simCards.isEmpty()) {
-                        Text("لم تُقرأ أي شريحة بعد. اتصل بـWireless ADB ثم حدّث القائمة.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("لم يتم العثور على شريحة. حدّث القائمة.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         simCards.forEach { sim ->
                             FilterChip(
@@ -236,7 +236,10 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
                         if (sim.currentConfig.isEmpty()) {
                             Text("لا يوجد override ظاهر حالياً.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
-                            sim.currentConfig.forEach { (key, value) -> Text("$key: $value", style = MaterialTheme.typography.bodyMedium) }
+                            Text("يوجد إعداد مخصص لهذه الشريحة.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            ExpandableDetails("عرض تفاصيل الإعداد الحالي") {
+                                sim.currentConfig.forEach { (key, value) -> Text("$key: $value", style = MaterialTheme.typography.bodyMedium) }
+                            }
                         }
                     }
                 }
@@ -346,11 +349,6 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
                             )
                         }
                     }
-                    selectedCarrier?.let { carrier ->
-                        if (!carrier.custom && carrier.displayName.isNotBlank()) {
-                            Text("القيمة المرسلة: ${carrier.displayName}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
                     if (selectedCarrier?.custom == true) {
                         OutlinedTextField(
                             value = customCarrierName,
@@ -379,29 +377,17 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = {
-                        val sim = selectedSim ?: return@OutlinedButton
-                        scope.launch {
-                            busy = true
-                            val result = withContext(Dispatchers.IO) { controller.resetCarrierConfig(sim) }
-                            if (result.isSuccess) {
-                                clearSelections()
-                                message = "أُرسل طلب إعادة التعيين؛ سيظهر التأكيد بعد عودة التطبيق."
-                            } else {
-                                message = "فشل بدء إعادة التعيين: ${result.exceptionOrNull()?.message}"
-                            }
-                            busy = false
-                                                if (result.isSuccess) waitForOperationResult()
-                        }
-                    },
+                KUNSecondaryButton(
+                    text = "مسح الإعدادات",
+                    onClick = { showResetConfirmation = true },
                     enabled = selectedSim != null && connected && !busy && !controller.operationPending,
-                    modifier = Modifier.weight(1f).height(54.dp),
-                    shape = RoundedCornerShape(16.dp),
-                ) { Text("مسح الإعدادات") }
-                Button(
+                    modifier = Modifier.weight(1f).height(52.dp),
+                )
+                KUNPrimaryButton(
+                    text = "تطبيق الإعدادات",
+                    loading = busy,
                     onClick = {
-                        val sim = selectedSim ?: return@Button
+                        val sim = selectedSim ?: return@KUNPrimaryButton
                         val country = if (isCustomCountryCode) customCountryCode.takeIf { it.length == 2 } else selectedCountryCode.takeIf { it.isNotEmpty() }
                         val carrierName = when {
                             selectedCarrier?.custom == true -> customCarrierName.takeIf { it.isNotEmpty() }
@@ -411,9 +397,9 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
                         scope.launch {
                             busy = true
                             val result = withContext(Dispatchers.IO) { controller.saveCarrierConfig(sim, country, carrierName) }
-                            message = if (result.isSuccess) "أُرسل طلب الحفظ؛ سيظهر التأكيد بعد عودة التطبيق." else "فشل بدء الحفظ: ${result.exceptionOrNull()?.message}"
+                            message = if (result.isSuccess) "جارٍ التنفيذ…" else controller.consumeOperationMessage() ?: "فشل: ${result.exceptionOrNull()?.message ?: "تعذر تنفيذ العملية."}"
                             busy = false
-                                                if (result.isSuccess) waitForOperationResult()
+                            if (result.isSuccess) waitForOperationResult()
                         }
                     },
                     enabled = selectedSim != null && connected && !busy && !controller.operationPending && (
@@ -421,15 +407,36 @@ internal fun SimScreen(padding: PaddingValues, adbReady: Boolean, onGoToAdb: () 
                             (!isCustomCountryCode && selectedCountryCode.isNotEmpty()) ||
                             (selectedCarrier != null && (!selectedCarrier.custom || customCarrierName.isNotEmpty()))
                         ),
-                    modifier = Modifier.weight(1f).height(54.dp),
-                    shape = RoundedCornerShape(16.dp),
-                ) {
-                    if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
-                    else Text("تطبيق الإعدادات")
-                }
+                    modifier = Modifier.weight(1f).height(52.dp),
+                )
             }
         }
         message?.let { text -> item { InlineMessage(text) } }
+    }
+    if (showResetConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showResetConfirmation = false },
+            title = { Text("تأكيد مسح الإعدادات") },
+            text = { Text("سيُحذف إعداد CarrierConfig المخصص لهذه الشريحة. هل تريد المتابعة؟") },
+            confirmButton = {
+                TextButton(
+                    enabled = !busy,
+                    onClick = {
+                        showResetConfirmation = false
+                        val sim = selectedSim ?: return@TextButton
+                        scope.launch {
+                            busy = true
+                            val result = withContext(Dispatchers.IO) { controller.resetCarrierConfig(sim) }
+                            if (result.isSuccess) clearSelections()
+                            message = if (result.isSuccess) "جارٍ التنفيذ…" else controller.consumeOperationMessage() ?: "فشل: ${result.exceptionOrNull()?.message ?: "تعذر تنفيذ العملية."}"
+                            busy = false
+                            if (result.isSuccess) waitForOperationResult()
+                        }
+                    },
+                ) { Text("مسح", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { showResetConfirmation = false }) { Text("إلغاء") } },
+        )
     }
 }
 @Composable
@@ -444,7 +451,19 @@ private fun NoticeCard(title: String, body: String, color: Color, textColor: Col
 
 @Composable
 private fun InlineMessage(message: String) {
-    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
-        Text(message, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Start)
+    val success = message.startsWith("نجح") || message.startsWith("تم التحديث")
+    val failure = message.startsWith("فشل") || message.startsWith("تعذر")
+    val container = when {
+        success -> KunPalette.SuccessSoft
+        failure -> KunPalette.ErrorSoft
+        else -> MaterialTheme.colorScheme.secondaryContainer
+    }
+    val foreground = when {
+        success -> KunPalette.Success
+        failure -> KunPalette.Error
+        else -> MaterialTheme.colorScheme.onSecondaryContainer
+    }
+    Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = container) {
+        Text(message, Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Start, color = foreground, fontWeight = FontWeight.SemiBold)
     }
 }
