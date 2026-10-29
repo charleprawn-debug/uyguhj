@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.KunBrowser">
+    <style name="Theme.KunBrowser" parent="@style/Theme.KunBrowser.Base">
         <item name="android:windowLightNavigationBar">true</item>
     </style>
 </resources>
