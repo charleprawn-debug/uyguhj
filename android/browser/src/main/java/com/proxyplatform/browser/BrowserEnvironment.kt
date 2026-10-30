@@ -7,6 +7,9 @@ import java.util.Locale
 internal object BrowserEnvironment {
     const val PRIVACY_TIME_ZONE = "UTC"
     const val FINGERPRINTING_TIME_ZONE_TARGET = "+JSDateTimeUTC"
+    const val FINGERPRINTING_PROTECTION_OVERRIDES =
+        FINGERPRINTING_TIME_ZONE_TARGET +
+            ",+CanvasRandomization,+CanvasExtractionFromThirdPartiesIsBlocked,+CanvasExtractionBeforeUserInputIsBlocked"
 
     private val languageTagPattern = Regex("^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
 
