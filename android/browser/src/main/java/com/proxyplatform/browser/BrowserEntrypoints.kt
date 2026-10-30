@@ -1,23 +1,14 @@
 package com.proxyplatform.browser
 
-import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import android.content.Intent
 
-/** Public launcher entry: opens safely without proxy extras; browsing stays locked until KUN hands off a live connection. */
-class BrowserHomeActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        startActivity(Intent(this, BrowserActivity::class.java))
-        finish()
-    }
-}
-
-/** Signature-protected entry used only by the companion KUN app to pass the already-running proxy endpoint. */
+/** Compatibility entry from KUN Proxy; the standalone browser still requires its own sign-in and profile selection. */
 class BrowserLaunchActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        startActivity(Intent(this, BrowserActivity::class.java).putExtras(intent).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP))
+        startActivity(Intent(this, BrowserHomeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
         finish()
     }
 }
