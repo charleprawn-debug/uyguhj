@@ -169,9 +169,11 @@ internal class BrowserProfileStore(context: Context, accountEmail: String) {
 
     @Synchronized fun save(profile: BrowserProfile): List<BrowserProfile> {
         require(profile.name.isNotBlank()) { "سمّ ملف التصفح أولًا." }
-        require(profile.host.isNotBlank()) { "أدخل عنوان البروكسي." }
-        require(profile.port in 1..65535) { "رقم المنفذ يجب أن يكون بين 1 و65535." }
-        require(profile.protocol in setOf("http", "socks5")) { "اختر HTTP أو SOCKS5." }
+        if (profile.proxyId != "direct") {
+            require(profile.host.isNotBlank()) { "أدخل عنوان البروكسي." }
+            require(profile.port in 1..65535) { "رقم المنفذ يجب أن يكون بين 1 و65535." }
+            require(profile.protocol in setOf("http", "socks5")) { "اختر HTTP أو SOCKS5." }
+        }
         val rows = load().toMutableList()
         val index = rows.indexOfFirst { it.id == profile.id }
         if (index >= 0) rows[index] = profile else rows.add(0, profile)

@@ -90,9 +90,11 @@ class BrowserHomeActivity : ComponentActivity() {
     }
 
     private fun openProfile(profile: BrowserProfile) {
+        val direct = profile.proxyId == "direct"
         val language = if (profile.languageMode == "custom") profile.language.trim() else profile.detectedLocale.ifBlank { Locale.getDefault().toLanguageTag() }
         val timeZone = if (profile.timeZoneMode == "custom") profile.timeZone.trim() else profile.detectedTimeZone.ifBlank { TimeZone.getDefault().id }
         val locationMode = when {
+            direct && profile.locationMode == "auto" -> "off"
             profile.locationMode == "off" -> "off"
             profile.locationMode == "custom" -> "custom"
             profile.detectedLatitude.isNotBlank() && profile.detectedLongitude.isNotBlank() -> "resolved"
@@ -101,7 +103,7 @@ class BrowserHomeActivity : ComponentActivity() {
         val latitude = if (profile.locationMode == "custom") profile.latitude else profile.detectedLatitude
         val longitude = if (profile.locationMode == "custom") profile.longitude else profile.detectedLongitude
         val intent = Intent(this, BrowserActivity::class.java).apply {
-            putExtra("kun.browser.proxy_mode", "profile")
+            putExtra("kun.browser.proxy_mode", if (direct) "direct" else "profile")
             putExtra("kun.browser.proxy_protocol", profile.protocol)
             putExtra("kun.browser.proxy_host", profile.host)
             putExtra("kun.browser.local_port", profile.port)
@@ -240,10 +242,10 @@ private fun BrowserPortalApp(onOpen: (BrowserProfile) -> Unit, onClearProfileDat
             title = { Text(profile.name, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("البروكسي: ${profile.protocol.uppercase()} • ${profile.host}:${profile.port}")
-                    Text("اللغة: ${if (profile.languageMode == "auto") "تلقائي من الجهاز" else profile.language}")
-                    Text("المنطقة الزمنية: ${if (profile.timeZoneMode == "auto") "تلقائي من الجهاز" else profile.timeZone}")
-                    Text("الموقع: ${when (profile.locationMode) { "custom" -> "مخصص (${profile.latitude}, ${profile.longitude})"; "off" -> "غير محدد"; else -> "تلقائي حسب عنوان خروج البروكسي" }}")
+                    Text("الاتصال: ${if (profile.proxyId == "direct") "مباشر بدون بروكسي" else "${profile.protocol.uppercase()} • ${profile.host}:${profile.port}"}")
+                    Text("اللغة: ${if (profile.languageMode == "auto") if (profile.proxyId == "direct") "تلقائي من الجهاز" else "تلقائي حسب البروكسي" else profile.language}")
+                    Text("المنطقة الزمنية: ${if (profile.timeZoneMode == "auto") if (profile.proxyId == "direct") "تلقائي من الجهاز" else "تلقائي حسب البروكسي" else profile.timeZone}")
+                    Text("الموقع: ${when (profile.locationMode) { "custom" -> "مخصص (${profile.latitude}, ${profile.longitude})"; "off" -> "غير محدد"; else -> if (profile.proxyId == "direct") "إعداد الجهاز" else "تلقائي حسب عنوان خروج البروكسي" }}")
                     Text("كلمة مرور البروكسي محفوظة مشفّرة على هذا الجهاز.", style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
             },
@@ -327,7 +329,7 @@ private fun BrowserDashboard(
             Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("ملفات التصفح", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("لكل ملف بروكسي وبيانات تصفح منفصلة.", color = Color.White.copy(alpha = .78f), style = MaterialTheme.typography.bodySmall)
+                    Text("لكل ملف إعداد اتصال وبيانات تصفح منفصلة.", color = Color.White.copy(alpha = .78f), style = MaterialTheme.typography.bodySmall)
                 }
                 Surface(Modifier.size(42.dp), shape = CircleShape, color = Color.White.copy(alpha = .14f)) { Box(contentAlignment = Alignment.Center) { Text("${profiles.size}", color = Color.White, fontWeight = FontWeight.Bold) } }
             }
@@ -346,7 +348,7 @@ private fun BrowserDashboard(
             Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = Color.White), border = androidx.compose.foundation.BorderStroke(1.dp, Line)) {
                 Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("ابدأ بإنشاء أول ملف", color = Ink, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text("سمّه، اختر بروكسي الحساب أو أدخل بروكسيًا يدويًا، ثم اضبط اللغة والوقت والموقع.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text("سمّه، اختر بروكسيًا أو اتصالًا مباشرًا، ثم اضبط اللغة والوقت والموقع.", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
             }
         } else {
@@ -368,14 +370,14 @@ private fun ProfileCard(profile: BrowserProfile, onDetails: (BrowserProfile) -> 
                 Spacer(Modifier.width(11.dp))
                 Column(Modifier.weight(1f)) {
                     Text(profile.name, color = Ink, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-                    Text("${profile.protocol.uppercase()}  •  ${profile.host}:${profile.port}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(if (profile.proxyId == "direct") "اتصال مباشر • بدون بروكسي" else "${profile.protocol.uppercase()}  •  ${profile.host}:${profile.port}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 TextButton(onClick = { onDetails(profile) }) { Text("التفاصيل") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                InfoPill(if (profile.languageMode == "auto") "لغة تلقائية" else profile.language)
-                InfoPill(if (profile.timeZoneMode == "auto") "وقت تلقائي" else profile.timeZone)
-                InfoPill(when (profile.locationMode) { "custom" -> "موقع مخصص"; "off" -> "الموقع مغلق"; else -> "موقع تلقائي" })
+                InfoPill(if (profile.languageMode == "auto") if (profile.proxyId == "direct") "لغة الجهاز" else "لغة تلقائية" else profile.language)
+                InfoPill(if (profile.timeZoneMode == "auto") if (profile.proxyId == "direct") "وقت الجهاز" else "وقت تلقائي" else profile.timeZone)
+                InfoPill(when (profile.locationMode) { "custom" -> "موقع مخصص"; "off" -> "الموقع مغلق"; else -> if (profile.proxyId == "direct") "موقع الجهاز" else "موقع تلقائي" })
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Button(onClick = { onOpen(profile) }, modifier = Modifier.weight(1.25f), shape = RoundedCornerShape(13.dp)) { Text("فتح", fontWeight = FontWeight.Bold) }
@@ -404,7 +406,9 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
     var language by remember(initial?.id) { mutableStateOf(initial?.language.orEmpty()) }
     var timeMode by remember(initial?.id) { mutableStateOf(initial?.timeZoneMode ?: "auto") }
     var timeZone by remember(initial?.id) { mutableStateOf(initial?.timeZone.orEmpty()) }
-    var locationMode by remember(initial?.id) { mutableStateOf(initial?.locationMode ?: "auto") }
+    var locationMode by remember(initial?.id) {
+        mutableStateOf(initial?.let { if (it.proxyId == "direct" && it.locationMode == "auto") "off" else it.locationMode } ?: "auto")
+    }
     var latitude by remember(initial?.id) { mutableStateOf(initial?.latitude.orEmpty()) }
     var longitude by remember(initial?.id) { mutableStateOf(initial?.longitude.orEmpty()) }
     var formError by remember(initial?.id) { mutableStateOf<String?>(null) }
@@ -428,9 +432,10 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             OutlinedTextField(value = name, onValueChange = { name = it; formError = null }, modifier = Modifier.fillMaxWidth(), label = { Text("اسم الملف") }, placeholder = { Text("مثال: عمل، شخصي، متجر") }, singleLine = true, shape = RoundedCornerShape(14.dp))
             Text("البروكسي", color = Ink, fontWeight = FontWeight.Bold)
-            Text("يمكن اختيار بروكسي نشط من حساب KUN أو إدخال بروكسي خارجي.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Text("استخدم بروكسي KUN، أدخل بروكسيًا خارجيًا، أو اختر اتصالًا مباشرًا.", color = Muted, style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                FilterChip(selected = proxyId == "manual", onClick = { proxyId = "manual"; detected = null; probeError = null }, label = { Text("إدخال يدوي") })
+                FilterChip(selected = proxyId == "direct", onClick = { proxyId = "direct"; protocol = "direct"; host = ""; port = ""; username = ""; password = ""; detected = null; probeError = null; if (locationMode == "auto") locationMode = "off" }, label = { Text("بدون بروكسي") })
+                FilterChip(selected = proxyId == "manual", onClick = { proxyId = "manual"; if (protocol == "direct") protocol = "socks5"; detected = null; probeError = null }, label = { Text("إدخال يدوي") })
                 if (proxiesLoading) FilterChip(selected = false, onClick = {}, enabled = false, label = { Text("جارٍ التحميل") })
             }
             if (accountProxies.isNotEmpty()) {
@@ -443,7 +448,11 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
                     )
                 }
             }
-            if (proxyId == "manual") {
+            if (proxyId == "direct") {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3E0)), shape = RoundedCornerShape(14.dp)) {
+                    Text("سيستخدم المتصفح الإنترنت مباشرةً من الهاتف. لن يمر الاتصال عبر KUN أو بروكسي، وقد يظهر عنوان اتصالك الحقيقي للمواقع.", Modifier.fillMaxWidth().padding(12.dp), color = Color(0xFF8A4B08), style = MaterialTheme.typography.bodySmall)
+                }
+            } else if (proxyId == "manual") {
                 Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     FilterChip(selected = protocol == "socks5", onClick = { protocol = "socks5"; detected = null }, label = { Text("SOCKS5") })
                     FilterChip(selected = protocol == "http", onClick = { protocol = "http"; detected = null }, label = { Text("HTTP") })
@@ -454,6 +463,7 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
                 OutlinedTextField(value = username, onValueChange = { username = it }, modifier = Modifier.fillMaxWidth(), label = { Text("اسم المستخدم (اختياري)") }, singleLine = true, shape = RoundedCornerShape(14.dp))
                 OutlinedTextField(value = password, onValueChange = { password = it }, modifier = Modifier.fillMaxWidth(), label = { Text("كلمة مرور البروكسي (اختياري)") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), shape = RoundedCornerShape(14.dp))
             }
+            if (proxyId != "direct") {
             OutlinedButton(
                 onClick = {
                     val portNumber = port.toIntOrNull()
@@ -490,17 +500,18 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
                 }
             }
             if (probeError != null) Text(probeError.orEmpty(), color = Color(0xFFB3261E), style = MaterialTheme.typography.bodySmall)
+            }
             SectionRule("اللغة")
             ChoiceRow(listOf("مطابقة البروكسي" to "auto", "مخصص" to "custom"), languageMode) { languageMode = it }
-            if (languageMode == "auto") Text("بعد نجاح الفحص، تُستخدم لغة مناسبة لبلد خروج البروكسي.", style = MaterialTheme.typography.bodySmall, color = Muted)
+            if (languageMode == "auto") Text(if (proxyId == "direct") "سيستخدم الملف لغة الجهاز الحالية." else "بعد نجاح الفحص، تُستخدم لغة مناسبة لبلد خروج البروكسي.", style = MaterialTheme.typography.bodySmall, color = Muted)
             if (languageMode == "custom") OutlinedTextField(value = language, onValueChange = { language = it }, modifier = Modifier.fillMaxWidth(), label = { Text("رمز اللغة") }, placeholder = { Text("ar-SA أو en-US") }, singleLine = true, shape = RoundedCornerShape(14.dp))
             SectionRule("المنطقة الزمنية")
             ChoiceRow(listOf("مطابقة البروكسي" to "auto", "مخصص" to "custom"), timeMode) { timeMode = it }
-            if (timeMode == "auto") Text("بعد نجاح الفحص، تُضبط منطقة Gecko الزمنية حسب بلد خروج البروكسي.", style = MaterialTheme.typography.bodySmall, color = Muted)
+            if (timeMode == "auto") Text(if (proxyId == "direct") "سيستخدم الملف المنطقة الزمنية الحالية للجهاز." else "بعد نجاح الفحص، تُضبط منطقة Gecko الزمنية حسب بلد خروج البروكسي.", style = MaterialTheme.typography.bodySmall, color = Muted)
             if (timeMode == "custom") OutlinedTextField(value = timeZone, onValueChange = { timeZone = it }, modifier = Modifier.fillMaxWidth(), label = { Text("المنطقة الزمنية") }, placeholder = { Text("Europe/Istanbul") }, singleLine = true, shape = RoundedCornerShape(14.dp))
             SectionRule("الموقع")
-            ChoiceRow(listOf("تلقائي عبر IP" to "auto", "موقع مخصص" to "custom", "إيقاف" to "off"), locationMode) { locationMode = it }
-            if (locationMode == "auto") Text("يُستخدم موقع IP التقريبي المكتشف عبر البروكسي. وهو لا يمثل GPS دقيقًا.", style = MaterialTheme.typography.bodySmall, color = Muted)
+            ChoiceRow(if (proxyId == "direct") listOf("موقع مخصص" to "custom", "إيقاف" to "off") else listOf("تلقائي عبر IP" to "auto", "موقع مخصص" to "custom", "إيقاف" to "off"), locationMode) { locationMode = it }
+            if (locationMode == "auto" && proxyId != "direct") Text("يُستخدم موقع IP التقريبي المكتشف عبر البروكسي. وهو لا يمثل GPS دقيقًا.", style = MaterialTheme.typography.bodySmall, color = Muted)
             if (locationMode == "custom") {
                 Text("أدخل إحداثيات يدوية للمواقع التي تطلب الموقع. لا يقرأ المتصفح GPS الحقيقي للهاتف.", style = MaterialTheme.typography.bodySmall, color = Muted)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -512,11 +523,12 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
             if (formError != null || saveError != null) Text(formError ?: saveError.orEmpty(), color = Color(0xFFB3261E), style = MaterialTheme.typography.bodySmall)
             Button(
                 onClick = {
+                    val direct = proxyId == "direct"
                     val portNumber = port.toIntOrNull()
                     formError = when {
                         name.isBlank() -> "اكتب اسمًا للملف."
-                        host.isBlank() -> "أدخل عنوان البروكسي."
-                        portNumber == null || portNumber !in 1..65535 -> "أدخل منفذًا صالحًا بين 1 و65535."
+                        !direct && host.isBlank() -> "أدخل عنوان البروكسي أو اختر الاتصال المباشر."
+                        !direct && (portNumber == null || portNumber !in 1..65535) -> "أدخل منفذًا صالحًا بين 1 و65535."
                         languageMode == "custom" && language.isBlank() -> "أدخل رمز اللغة أو اختر التلقائي."
                         timeMode == "custom" && timeZone.isBlank() -> "أدخل المنطقة الزمنية أو اختر التلقائي."
                         locationMode == "custom" && (latitude.toDoubleOrNull()?.let { it !in -90.0..90.0 } != false || longitude.toDoubleOrNull()?.let { it !in -180.0..180.0 } != false) -> "أدخل خطي عرض وطول ضمن الحدود الصحيحة."
@@ -524,9 +536,10 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
                     }
                     if (formError == null) onSave(BrowserProfile(
                         id = initial?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim(), proxyId = proxyId,
-                        protocol = protocol, host = host.trim(), port = portNumber!!, username = username, password = password,
+                        protocol = if (direct) "direct" else protocol, host = if (direct) "" else host.trim(), port = if (direct) 0 else portNumber!!,
+                        username = if (direct) "" else username, password = if (direct) "" else password,
                         languageMode = languageMode, language = language.trim(), timeZoneMode = timeMode, timeZone = timeZone.trim(),
-                        locationMode = locationMode, latitude = latitude.trim(), longitude = longitude.trim(),
+                        locationMode = if (direct && locationMode == "auto") "off" else locationMode, latitude = latitude.trim(), longitude = longitude.trim(),
                         detectedCountry = detected?.country.orEmpty(), detectedCountryCode = detected?.countryCode.orEmpty(),
                         detectedLocale = detected?.suggestedLanguage.orEmpty(), detectedTimeZone = detected?.timeZone.orEmpty(),
                         detectedLatitude = detected?.latitude?.takeIf { it.isFinite() }?.toString().orEmpty(),

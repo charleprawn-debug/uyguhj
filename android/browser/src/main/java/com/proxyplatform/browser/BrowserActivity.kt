@@ -13,13 +13,23 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -42,8 +52,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.LayoutDirection
@@ -57,6 +70,7 @@ import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.StorageController
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebExtension
+import org.mozilla.geckoview.WebRequestError
 import java.io.File
 import java.util.Locale
 import java.util.TimeZone
@@ -79,7 +93,7 @@ private const val PROFILE_EXTENSION_URI = "resource://android/assets/kun-profile
 private const val PROFILE_EXTENSION_ID = "kun-profile-environment@kun.app"
 internal const val ACTION_CLEAR_PROFILE = "com.proxyplatform.browser.action.CLEAR_PROFILE"
 
-private data class BrowserLaunchConfig(
+internal data class BrowserLaunchConfig(
     val mode: String,
     val localPort: Int,
     val proxyProtocol: String,
@@ -95,7 +109,8 @@ private data class BrowserLaunchConfig(
     val longitude: String,
 ) {
     val connectionReady: Boolean
-        get() = (mode in setOf("vpn", "advanced") && localPort in 1024..65535) ||
+        get() = mode == "direct" ||
+            (mode in setOf("vpn", "advanced") && localPort in 1024..65535) ||
             (mode == "profile" && proxyHost.isNotBlank() && localPort in 1..65535 && proxyProtocol in setOf("http", "socks5"))
 
     fun signature(): String = "$mode|$localPort|$proxyProtocol|$proxyHost|$proxyUsername|$proxyPassword|$language|$timeZone|$profileId|$locationMode|$latitude|$longitude"
@@ -121,7 +136,7 @@ private data class BrowserLaunchConfig(
     }
 }
 
-private class BrowserTab(
+internal class BrowserTab(
     val id: String,
     val session: GeckoSession,
     val privateMode: Boolean,
@@ -130,11 +145,12 @@ private class BrowserTab(
     var title by mutableStateOf(if (privateMode) "تبويب خاص" else "تبويب جديد")
     var uri by mutableStateOf("")
     var loading by mutableStateOf(false)
+    var errorMessage by mutableStateOf<String?>(null)
     var canGoBack by mutableStateOf(false)
     var canGoForward by mutableStateOf(false)
 }
 
-private class BrowserController(private val activity: BrowserActivity) {
+internal class BrowserController(private val activity: BrowserActivity) {
     val tabs = mutableStateListOf<BrowserTab>()
     val profiles = mutableStateListOf<Pair<String, String>>()
     var selectedTabId by mutableStateOf<String?>(null)
@@ -144,6 +160,8 @@ private class BrowserController(private val activity: BrowserActivity) {
     var activeProfileName by mutableStateOf("الافتراضي")
         private set
     var connectionReady by mutableStateOf(false)
+        private set
+    var directConnection by mutableStateOf(false)
         private set
     var connectionLabel by mutableStateOf("افتح المتصفح من KUN بعد تشغيل الاتصال")
         private set
@@ -173,15 +191,17 @@ private class BrowserController(private val activity: BrowserActivity) {
         runCatching { runtime?.shutdown() }
         runtime = null
         connectionReady = config.connectionReady
+        directConnection = config.mode == "direct"
         connectionLabel = when (config.mode) {
             "vpn" -> "اتصال KUN VPN"
             "advanced" -> "بروكسي KUN المحلي"
+            "direct" -> "اتصال مباشر • بدون بروكسي"
             "profile" -> "ملف: ${config.profileName} • ${config.proxyProtocol.uppercase()}"
-            else -> "افتح المتصفح من KUN بعد تشغيل الاتصال"
+            else -> "اختر ملفًا لبدء التصفح"
         }
         languageLabel = config.language
         timeZoneLabel = config.timeZone
-        if (config.mode == "profile") {
+        if (config.mode in setOf("profile", "direct")) {
             activeProfileId = config.profileId
             activeProfileName = config.profileName
         }
@@ -205,7 +225,7 @@ private class BrowserController(private val activity: BrowserActivity) {
     }
 
     fun newTab(privateMode: Boolean = false) {
-        createTab(privateMode, activeProfileId, "about:blank")
+        createTab(privateMode, activeProfileId, "")
     }
 
     private fun createTab(privateMode: Boolean, profileId: String, initialUri: String): BrowserTab? {
@@ -230,7 +250,7 @@ private class BrowserController(private val activity: BrowserActivity) {
                 hasUserGesture: Boolean,
             ) {
                 tab.uri = url.orEmpty()
-                recordVisit(url.orEmpty(), tab.privateMode)
+                if (!url.isNullOrBlank() && url != "about:blank") recordVisit(url, tab.privateMode)
             }
 
             override fun onCanGoBack(session: GeckoSession, canGoBack: Boolean) {
@@ -239,6 +259,18 @@ private class BrowserController(private val activity: BrowserActivity) {
 
             override fun onCanGoForward(session: GeckoSession, canGoForward: Boolean) {
                 tab.canGoForward = canGoForward
+            }
+
+            override fun onLoadError(session: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
+                tab.loading = false
+                tab.errorMessage = when (error.code) {
+                    WebRequestError.ERROR_UNKNOWN_HOST, WebRequestError.ERROR_UNKNOWN_PROXY_HOST -> "تعذّر العثور على الموقع أو خادم البروكسي. تحقق من العنوان وإعداد الاتصال."
+                    WebRequestError.ERROR_PROXY_CONNECTION_REFUSED, WebRequestError.ERROR_CONNECTION_REFUSED -> "رفض خادم البروكسي الاتصال. تحقق من بيانات البروكسي أو اختر اتصالًا مباشرًا."
+                    WebRequestError.ERROR_NET_TIMEOUT -> "انتهت مهلة الاتصال. حاول مجددًا أو افحص البروكسي."
+                    WebRequestError.ERROR_SECURITY_SSL, WebRequestError.ERROR_SECURITY_BAD_CERT, WebRequestError.ERROR_BAD_HSTS_CERT -> "تعذّر التحقق من شهادة أمان الموقع. لم نفتح الصفحة لحمايتك."
+                    else -> "تعذّر تحميل الصفحة. تحقق من الإنترنت والبروكسي ثم أعد المحاولة."
+                }
+                return null
             }
 
             override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
@@ -252,6 +284,7 @@ private class BrowserController(private val activity: BrowserActivity) {
             override fun onPageStart(session: GeckoSession, url: String) {
                 tab.loading = true
                 tab.uri = url
+                tab.errorMessage = null
             }
 
             override fun onPageStop(session: GeckoSession, success: Boolean) {
@@ -261,7 +294,7 @@ private class BrowserController(private val activity: BrowserActivity) {
         session.open(currentRuntime)
         tabs.add(tab)
         selectTab(tab.id)
-        if (connectionReady) session.loadUri(initialUri)
+        if (connectionReady && initialUri.isNotBlank() && initialUri != "about:blank") session.loadUri(initialUri)
         return tab
     }
 
@@ -296,6 +329,7 @@ private class BrowserController(private val activity: BrowserActivity) {
     fun goForward() { selectedTab?.session?.goForward() }
     fun reload() { selectedTab?.session?.reload() }
     fun stop() { selectedTab?.session?.stop() }
+    fun goHome() { selectedTab?.session?.loadUri("about:blank") }
 
     fun addBookmark(): Boolean {
         val uri = selectedTab?.uri?.takeIf { it.startsWith("https://") || it.startsWith("http://") } ?: return false
@@ -442,7 +476,7 @@ private class BrowserController(private val activity: BrowserActivity) {
                         if (nativeApp != "kun.browser" || action != "profile-environment") return null
                         return GeckoResult.fromValue(
                             org.json.JSONObject()
-                                .put("enabled", config.mode == "profile")
+                            .put("enabled", config.mode in setOf("profile", "direct"))
                                 .put("language", config.language)
                                 .put("timeZone", config.timeZone)
                                 .put("locationMode", config.locationMode)
@@ -490,7 +524,12 @@ private class BrowserController(private val activity: BrowserActivity) {
     private fun writeRuntimeConfig(config: BrowserLaunchConfig): File {
         val file = File(activity.filesDir, "gecko-runtime.yaml")
         val safeLanguage = config.language.filter { it.isLetterOrDigit() || it in "-_, " }.ifBlank { "en-US,en" }
-        val proxyPrefs = if (config.connectionReady && config.mode == "profile" && config.proxyProtocol == "http") {
+        val proxyPrefs = if (config.mode == "direct") {
+            listOf(
+                "network.proxy.type: 0",
+                "media.peerconnection.ice.proxy_only: false",
+            )
+        } else if (config.connectionReady && config.mode == "profile" && config.proxyProtocol == "http") {
             val host = yamlString(config.proxyHost)
             listOf(
                 "network.proxy.type: 1",
@@ -590,7 +629,7 @@ class BrowserActivity : ComponentActivity() {
 }
 
 @Composable
-private fun BrowserScreen(controller: BrowserController) {
+private fun BrowserScreenLegacy(controller: BrowserController) {
     val activeTab = controller.selectedTab
     var address by remember(activeTab?.id) { mutableStateOf(activeTab?.uri.orEmpty()) }
     var showBookmarks by remember { mutableStateOf(false) }
