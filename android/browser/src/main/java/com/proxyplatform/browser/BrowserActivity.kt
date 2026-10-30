@@ -220,9 +220,13 @@ internal class BrowserController(private val activity: BrowserActivity) {
                 .build()
             settings.setFingerprintingProtection(true)
             settings.setFingerprintingProtectionPrivateBrowsing(true)
-            settings.setFingerprintingProtectionOverrides(BrowserEnvironment.FINGERPRINTING_TIME_ZONE_TARGET)
+            settings.setFingerprintingProtectionOverrides(
+                BrowserEnvironment.FINGERPRINTING_PROTECTION_OVERRIDES,
+            )
             settings.setBaselineFingerprintingProtection(true)
-            settings.setBaselineFingerprintingProtectionOverrides(BrowserEnvironment.FINGERPRINTING_TIME_ZONE_TARGET)
+            settings.setBaselineFingerprintingProtectionOverrides(
+                BrowserEnvironment.FINGERPRINTING_PROTECTION_OVERRIDES,
+            )
             runtime = GeckoRuntime.create(activity.applicationContext, settings)
             configError = null
             newTab(privateMode = false)
@@ -591,7 +595,13 @@ internal class BrowserController(private val activity: BrowserActivity) {
                 "media.peerconnection.ice.proxy_only: true",
             )
         }
-        val yaml = (listOf("prefs:", "  intl.accept_languages: ${yamlString(safeLanguage)}") + proxyPrefs.map { "  $it" }).joinToString("\n", postfix = "\n")
+        val yaml = (
+            listOf(
+                "prefs:",
+                "  intl.accept_languages: ${yamlString(safeLanguage)}",
+                "  privacy.firstparty.isolate: true",
+            ) + proxyPrefs.map { "  $it" }
+        ).joinToString("\n", postfix = "\n")
         file.writeText(yaml)
         return file
     }
