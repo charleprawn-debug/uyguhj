@@ -123,10 +123,12 @@ internal data class BrowserLaunchConfig(
             proxyHost = intent?.getStringExtra(EXTRA_PROXY_HOST).orEmpty(),
             proxyUsername = intent?.getStringExtra(EXTRA_PROXY_USERNAME).orEmpty(),
             proxyPassword = intent?.getStringExtra(EXTRA_PROXY_PASSWORD).orEmpty(),
-            language = intent?.getStringExtra(EXTRA_LANGUAGE)?.takeIf(String::isNotBlank)
-                ?: Locale.getDefault().toLanguageTag(),
-            timeZone = intent?.getStringExtra(EXTRA_TIME_ZONE)?.takeIf(String::isNotBlank)
-                ?: TimeZone.getDefault().id,
+            language = BrowserEnvironment.normalizeAcceptLanguages(
+                intent?.getStringExtra(EXTRA_LANGUAGE).orEmpty().ifBlank { Locale.getDefault().toLanguageTag() },
+            ) ?: BrowserEnvironment.normalizeAcceptLanguages(Locale.getDefault().toLanguageTag()) ?: "en-US",
+            timeZone = BrowserEnvironment.normalizeTimeZone(
+                intent?.getStringExtra(EXTRA_TIME_ZONE).orEmpty().ifBlank { TimeZone.getDefault().id },
+            ) ?: "UTC",
             profileName = intent?.getStringExtra(EXTRA_PROFILE_NAME)?.takeIf(String::isNotBlank) ?: "الافتراضي",
             profileId = intent?.getStringExtra(EXTRA_PROFILE_ID)?.takeIf(String::isNotBlank) ?: "profile-default",
             locationMode = intent?.getStringExtra(EXTRA_LOCATION_MODE).orEmpty().ifBlank { "auto" },
@@ -223,6 +225,9 @@ internal class BrowserController(private val activity: BrowserActivity) {
                 .locales(arrayOf(locale))
                 .globalPrivacyControlEnabled(true)
                 .build()
+            settings.setFingerprintingProtection(true)
+            settings.setFingerprintingProtectionPrivateBrowsing(true)
+            settings.setBaselineFingerprintingProtection(true)
             runtime = GeckoRuntime.create(activity.applicationContext, settings)
             configError = null
             newTab(privateMode = false)
@@ -497,7 +502,6 @@ internal class BrowserController(private val activity: BrowserActivity) {
                         return GeckoResult.fromValue(
                             org.json.JSONObject()
                             .put("enabled", config.mode in setOf("profile", "direct"))
-                                .put("language", config.language)
                                 .put("timeZone", config.timeZone)
                                 .put("locationMode", config.locationMode)
                                 .put("latitude", config.latitude.toDoubleOrNull() ?: org.json.JSONObject.NULL)

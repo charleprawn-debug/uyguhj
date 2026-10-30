@@ -1,7 +1,6 @@
 browser.runtime.sendNativeMessage("kun.browser", { action: "profile-environment" }).then((config) => {
   if (!config || config.enabled !== true) return;
   const pageConfig = JSON.stringify({
-    language: typeof config.language === "string" ? config.language : "",
     timeZone: typeof config.timeZone === "string" ? config.timeZone : "",
     locationMode: typeof config.locationMode === "string" ? config.locationMode : "auto",
     latitude: Number(config.latitude),
@@ -10,13 +9,6 @@ browser.runtime.sendNativeMessage("kun.browser", { action: "profile-environment"
   const wrapped = `(() => {
     const cfg = ${pageConfig};
     const nav = window.navigator;
-    const define = (target, key, getter) => { try { Object.defineProperty(target, key, { configurable: true, get: getter }); } catch (_) {} };
-    if (cfg.language) {
-      const langs = cfg.language.split(",").map((value) => value.trim()).filter(Boolean);
-      const language = langs[0] || cfg.language;
-      define(Object.getPrototypeOf(nav), "language", () => language);
-      define(Object.getPrototypeOf(nav), "languages", () => Object.freeze(langs.length ? langs : [language]));
-    }
     if (cfg.timeZone) {
       const NativeDateTimeFormat = Intl.DateTimeFormat;
       const originalDateMethods = {};

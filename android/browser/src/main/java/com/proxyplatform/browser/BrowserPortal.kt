@@ -529,8 +529,8 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
                         name.isBlank() -> "اكتب اسمًا للملف."
                         !direct && host.isBlank() -> "أدخل عنوان البروكسي أو اختر الاتصال المباشر."
                         !direct && (portNumber == null || portNumber !in 1..65535) -> "أدخل منفذًا صالحًا بين 1 و65535."
-                        languageMode == "custom" && language.isBlank() -> "أدخل رمز اللغة أو اختر التلقائي."
-                        timeMode == "custom" && timeZone.isBlank() -> "أدخل المنطقة الزمنية أو اختر التلقائي."
+                        languageMode == "custom" && BrowserEnvironment.normalizeAcceptLanguages(language) == null -> "أدخل قائمة لغات صحيحة مثل en-CA,en-US."
+                        timeMode == "custom" && BrowserEnvironment.normalizeTimeZone(timeZone) == null -> "أدخل منطقة زمنية صحيحة مثل America/Toronto."
                         locationMode == "custom" && (latitude.toDoubleOrNull()?.let { it !in -90.0..90.0 } != false || longitude.toDoubleOrNull()?.let { it !in -180.0..180.0 } != false) -> "أدخل خطي عرض وطول ضمن الحدود الصحيحة."
                         else -> null
                     }
@@ -538,7 +538,10 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
                         id = initial?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim(), proxyId = proxyId,
                         protocol = if (direct) "direct" else protocol, host = if (direct) "" else host.trim(), port = if (direct) 0 else portNumber!!,
                         username = if (direct) "" else username, password = if (direct) "" else password,
-                        languageMode = languageMode, language = language.trim(), timeZoneMode = timeMode, timeZone = timeZone.trim(),
+                        languageMode = languageMode,
+                        language = BrowserEnvironment.normalizeAcceptLanguages(language).orEmpty(),
+                        timeZoneMode = timeMode,
+                        timeZone = BrowserEnvironment.normalizeTimeZone(timeZone).orEmpty(),
                         locationMode = if (direct && locationMode == "auto") "off" else locationMode, latitude = latitude.trim(), longitude = longitude.trim(),
                         detectedCountry = detected?.country.orEmpty(), detectedCountryCode = detected?.countryCode.orEmpty(),
                         detectedLocale = detected?.suggestedLanguage.orEmpty(), detectedTimeZone = detected?.timeZone.orEmpty(),
