@@ -20,14 +20,14 @@ class BrowserEnvironmentTest {
 
     @Test
     fun acceptsIanaTimeZonesAndUtc() {
-        assertEquals("America/Toronto", BrowserEnvironment.normalizeTimeZone("America/Toronto"))
+        assertEquals("America/Toronto", BrowserEnvironment.normalizeTimeZone(" America/Toronto "))
         assertEquals("UTC", BrowserEnvironment.normalizeTimeZone("UTC"))
     }
 
     @Test
     fun rejectsUnknownOrMalformedTimeZonesInsteadOfFallingBackToGmt() {
         assertNull(BrowserEnvironment.normalizeTimeZone("America/NotARealCity"))
-        assertNull(BrowserEnvironment.normalizeTimeZone("America/Toronto\n"))
+        assertNull(BrowserEnvironment.normalizeTimeZone("America/\nToronto"))
         assertNull(BrowserEnvironment.normalizeTimeZone(""))
     }
 }
