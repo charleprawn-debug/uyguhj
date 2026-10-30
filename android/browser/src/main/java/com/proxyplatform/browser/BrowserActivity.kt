@@ -173,6 +173,7 @@ internal class BrowserController(private val activity: BrowserActivity) {
         private set
 
     private var runtime: GeckoRuntime? = null
+    private var socks5Bridge: Socks5ProxyBridge? = null
     private var configSignature: String? = null
     private var launchConfig: BrowserLaunchConfig? = null
     private val preferences = activity.getSharedPreferences("kun_browser", 0)
@@ -190,6 +191,8 @@ internal class BrowserController(private val activity: BrowserActivity) {
         closeSessions()
         runCatching { runtime?.shutdown() }
         runtime = null
+        socks5Bridge?.close()
+        socks5Bridge = null
         connectionReady = config.connectionReady
         directConnection = config.mode == "direct"
         connectionLabel = when (config.mode) {
@@ -208,7 +211,12 @@ internal class BrowserController(private val activity: BrowserActivity) {
         launchConfig = config
         configSignature = config.signature()
         try {
-            val configFile = writeRuntimeConfig(config)
+            val socks5BridgePort = if (config.connectionReady && config.mode == "profile" && config.proxyProtocol == "socks5") {
+                Socks5ProxyBridge(config.proxyHost, config.localPort, config.proxyUsername, config.proxyPassword)
+                    .also { socks5Bridge = it }
+                    .start()
+            } else 0
+            val configFile = writeRuntimeConfig(config, socks5BridgePort)
             val locale = config.language.substringBefore(',').trim().ifBlank { Locale.getDefault().toLanguageTag() }
             val settings = GeckoRuntimeSettings.Builder()
                 .configFilePath(configFile.absolutePath)
@@ -219,9 +227,17 @@ internal class BrowserController(private val activity: BrowserActivity) {
             configError = null
             newTab(privateMode = false)
         } catch (failure: Exception) {
+            socks5Bridge?.close()
+            socks5Bridge = null
             configError = failure.message ?: "تعذر تهيئة محرك المتصفح."
             connectionReady = false
         }
+    }
+
+    fun retryLaunchConfig() {
+        val config = launchConfig ?: return
+        configSignature = null
+        applyLaunchConfig(config)
     }
 
     fun newTab(privateMode: Boolean = false) {
@@ -263,7 +279,8 @@ internal class BrowserController(private val activity: BrowserActivity) {
 
             override fun onLoadError(session: GeckoSession, uri: String?, error: WebRequestError): GeckoResult<String>? {
                 tab.loading = false
-                tab.errorMessage = when (error.code) {
+                val destinationHost = runCatching { uri?.let { Uri.parse(it).host } }.getOrNull()
+                tab.errorMessage = socks5Bridge?.failureMessageFor(destinationHost) ?: when (error.code) {
                     WebRequestError.ERROR_UNKNOWN_HOST, WebRequestError.ERROR_UNKNOWN_PROXY_HOST -> "تعذّر العثور على الموقع أو خادم البروكسي. تحقق من العنوان وإعداد الاتصال."
                     WebRequestError.ERROR_PROXY_CONNECTION_REFUSED, WebRequestError.ERROR_CONNECTION_REFUSED -> "رفض خادم البروكسي الاتصال. تحقق من بيانات البروكسي أو اختر اتصالًا مباشرًا."
                     WebRequestError.ERROR_NET_TIMEOUT -> "انتهت مهلة الاتصال. حاول مجددًا أو افحص البروكسي."
@@ -321,13 +338,14 @@ internal class BrowserController(private val activity: BrowserActivity) {
         val tab = selectedTab ?: return
         if (!connectionReady) return
         val target = normalizeAddress(raw) ?: return
+        socks5Bridge?.clearFailures()
         tab.uri = target
         tab.session.loadUri(target)
     }
 
     fun goBack() { selectedTab?.session?.goBack() }
     fun goForward() { selectedTab?.session?.goForward() }
-    fun reload() { selectedTab?.session?.reload() }
+    fun reload() { socks5Bridge?.clearFailures(); selectedTab?.session?.reload() }
     fun stop() { selectedTab?.session?.stop() }
     fun goHome() { selectedTab?.session?.loadUri("about:blank") }
 
@@ -440,6 +458,8 @@ internal class BrowserController(private val activity: BrowserActivity) {
         closeSessions()
         runCatching { runtime?.shutdown() }
         runtime = null
+        socks5Bridge?.close()
+        socks5Bridge = null
     }
 
     private fun configureProfileEnvironment(session: GeckoSession) {
@@ -521,7 +541,7 @@ internal class BrowserController(private val activity: BrowserActivity) {
         selectedTabId = null
     }
 
-    private fun writeRuntimeConfig(config: BrowserLaunchConfig): File {
+    private fun writeRuntimeConfig(config: BrowserLaunchConfig, socks5BridgePort: Int): File {
         val file = File(activity.filesDir, "gecko-runtime.yaml")
         val safeLanguage = config.language.filter { it.isLetterOrDigit() || it in "-_, " }.ifBlank { "en-US,en" }
         val proxyPrefs = if (config.mode == "direct") {
@@ -541,11 +561,12 @@ internal class BrowserController(private val activity: BrowserActivity) {
                 "network.proxy.failover_direct: false",
                 "media.peerconnection.ice.proxy_only: true",
             )
-        } else if (config.connectionReady && config.mode == "profile") {
+        } else if (config.connectionReady && config.mode == "profile" && config.proxyProtocol == "socks5") {
+            require(socks5BridgePort in 1..65535) { "تعذّر تشغيل وسيط SOCKS5 المحلي." }
             listOf(
                 "network.proxy.type: 1",
-                "network.proxy.socks: ${yamlString(config.proxyHost)}",
-                "network.proxy.socks_port: ${config.localPort}",
+                "network.proxy.socks: \"127.0.0.1\"",
+                "network.proxy.socks_port: $socks5BridgePort",
                 "network.proxy.socks_version: 5",
                 "network.proxy.socks_remote_dns: true",
                 "network.proxy.failover_direct: false",
@@ -625,150 +646,5 @@ class BrowserActivity : ComponentActivity() {
     override fun onDestroy() {
         if (isFinishing && ::controller.isInitialized) controller.shutdown()
         super.onDestroy()
-    }
-}
-
-@Composable
-private fun BrowserScreenLegacy(controller: BrowserController) {
-    val activeTab = controller.selectedTab
-    var address by remember(activeTab?.id) { mutableStateOf(activeTab?.uri.orEmpty()) }
-    var showBookmarks by remember { mutableStateOf(false) }
-    var showHistory by remember { mutableStateOf(false) }
-    var showMenu by remember { mutableStateOf(false) }
-    var feedback by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(activeTab?.uri) { address = activeTab?.uri.orEmpty() }
-    BackHandler(enabled = activeTab?.canGoBack == true) { controller.goBack() }
-
-    Surface(Modifier.fillMaxSize(), color = Color(0xFFF4F7FC)) {
-        Column(Modifier.fillMaxSize()) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    Column {
-                        Text("KUN Browser", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.ExtraBold, color = Color(0xFF15233B))
-                        Text(controller.connectionLabel, style = MaterialTheme.typography.labelSmall, color = if (controller.connectionReady) Color(0xFF16866F) else Color(0xFFBE3C45))
-                    }
-                    Surface(shape = RoundedCornerShape(99.dp), color = Color(0xFFEAF1FF)) {
-                        Text(controller.activeProfileName, Modifier.padding(horizontal = 11.dp, vertical = 7.dp), color = Color(0xFF2367D1), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    TextButton(onClick = { if (activeTab?.canGoBack == true) controller.goBack() }) { Text("‹") }
-                    OutlinedTextField(
-                        value = address,
-                        onValueChange = { address = it },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        placeholder = { Text("ابحث أو اكتب عنوان موقع") },
-                        shape = RoundedCornerShape(18.dp),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                        keyboardActions = KeyboardActions(onGo = { controller.goToAddress(address) }),
-                        colors = TextFieldDefaults.colors(unfocusedContainerColor = Color.White, focusedContainerColor = Color.White),
-                    )
-                    TextButton(onClick = { controller.goToAddress(address) }) { Text("اذهب", fontWeight = FontWeight.Bold) }
-                }
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(vertical = 1.dp)) {
-                    items(controller.tabs, key = { it.id }) { tab ->
-                        FilterChip(
-                            selected = tab.id == activeTab?.id,
-                            onClick = { controller.selectTab(tab.id) },
-                            label = { Text((if (tab.privateMode) "خاص · " else "") + tab.title.take(18), maxLines = 1) },
-                            trailingIcon = { TextButton(onClick = { controller.closeTab(tab.id) }, modifier = Modifier.size(28.dp)) { Text("×") } },
-                        )
-                    }
-                    item { TextButton(onClick = { controller.newTab() }) { Text("+ تبويب") } }
-                }
-            }
-
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                if (activeTab != null) {
-                    key(activeTab.id) {
-                        AndroidView(
-                            modifier = Modifier.fillMaxSize(),
-                            factory = { context -> GeckoView(context).apply { setSession(activeTab.session) } },
-                        )
-                    }
-                }
-                if (!controller.connectionReady || controller.configError != null) {
-                    Surface(Modifier.fillMaxSize(), color = Color(0xFFF4F7FC).copy(alpha = 0.96f)) {
-                        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("المتصفح جاهز", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold)
-                            Text(controller.configError ?: "شغّل اتصال البروكسي في KUN ثم افتح المتصفح من صفحة الاتصال.", modifier = Modifier.padding(top = 8.dp), color = Color(0xFF68768C))
-                            Text("لن يفتح المتصفح المواقع باتصال مباشر عند غياب اتصال KUN.", modifier = Modifier.padding(top = 8.dp), color = Color(0xFFBE3C45), style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-                if (activeTab?.loading == true) {
-                    CircularProgressIndicator(Modifier.align(Alignment.TopCenter).padding(8.dp).size(22.dp), strokeWidth = 2.dp)
-                }
-            }
-
-            Surface(color = Color.White, tonalElevation = 2.dp) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(enabled = activeTab?.canGoBack == true, onClick = { controller.goBack() }) { Text("رجوع") }
-                    TextButton(enabled = activeTab?.canGoForward == true, onClick = { controller.goForward() }) { Text("التالي") }
-                    TextButton(onClick = { if (activeTab?.loading == true) controller.stop() else controller.reload() }) { Text(if (activeTab?.loading == true) "إيقاف" else "تحديث") }
-                    TextButton(onClick = { feedback = if (controller.addBookmark()) "أُضيفت العلامة" else "افتح صفحة أولًا" }) { Text("حفظ") }
-                    TextButton(onClick = { showBookmarks = true }) { Text("المحفوظات") }
-                    TextButton(onClick = { showMenu = true }) { Text("المزيد") }
-                }
-            }
-        }
-    }
-
-    if (showBookmarks) {
-        AlertDialog(
-            onDismissRequest = { showBookmarks = false },
-            title = { Text("المحفوظات") },
-            text = {
-                if (controller.bookmarks().isEmpty()) Text("لا توجد صفحات محفوظة بعد.")
-                else Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    controller.bookmarks().forEach { uri ->
-                        TextButton(onClick = { controller.goToAddress(uri); address = uri; showBookmarks = false }) { Text(uri, maxLines = 1) }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showBookmarks = false }) { Text("تم") } },
-        )
-    }
-
-    if (showMenu) {
-        AlertDialog(
-            onDismissRequest = { showMenu = false },
-            title = { Text("إعدادات التصفح") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("اللغة: ${controller.languageLabel}")
-                    Text("المنطقة الزمنية: ${controller.timeZoneLabel}")
-                    Text("إشارة Global Privacy Control مفعّلة. حظر التتبع يعتمد على إعدادات محرك Gecko.", style = MaterialTheme.typography.bodySmall)
-                    Text("اتصال المتصفح يتبع البروكسي المحدد. إعدادات اللغة/الوقت لا تضمن إخفاء بصمة الجهاز بالكامل.", style = MaterialTheme.typography.bodySmall, color = Color(0xFF68768C))
-                    OutlinedButton(onClick = { showHistory = true; showMenu = false }) { Text("سجل التصفح") }
-                    OutlinedButton(onClick = { controller.newTab(privateMode = true); showMenu = false }) { Text("تبويب خاص جديد") }
-                    OutlinedButton(onClick = { controller.clearBrowsingData(); showMenu = false }) { Text("مسح بيانات التصفح") }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showMenu = false }) { Text("إغلاق") } },
-        )
-    }
-
-    if (showHistory) {
-        AlertDialog(
-            onDismissRequest = { showHistory = false },
-            title = { Text("سجل التصفح") },
-            text = {
-                if (controller.history().isEmpty()) Text("لا يوجد سجل محفوظ.")
-                else Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    controller.history().forEach { uri ->
-                        TextButton(onClick = { controller.goToAddress(uri); address = uri; showHistory = false }) { Text(uri, maxLines = 1) }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { controller.clearHistory(); showHistory = false }) { Text("مسح السجل") } },
-            dismissButton = { TextButton(onClick = { showHistory = false }) { Text("إغلاق") } },
-        )
-    }
-
-    if (feedback != null) {
-        AlertDialog(onDismissRequest = { feedback = null }, title = { Text("KUN Browser") }, text = { Text(feedback.orEmpty()) }, confirmButton = { TextButton(onClick = { feedback = null }) { Text("حسنًا") } })
     }
 }
