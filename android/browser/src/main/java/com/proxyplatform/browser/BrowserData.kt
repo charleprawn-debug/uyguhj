@@ -258,33 +258,7 @@ internal data class ProxyGeoInfo(
     val latitude: Double,
     val longitude: Double,
 ) {
-    val suggestedLanguage: String get() = localeForCountry(countryCode)
-
-    private fun localeForCountry(code: String): String = when (code.uppercase()) {
-        "SY" -> "ar-SY"
-        "SA" -> "ar-SA"
-        "AE" -> "ar-AE"
-        "EG" -> "ar-EG"
-        "JO" -> "ar-JO"
-        "LB" -> "ar-LB"
-        "IQ" -> "ar-IQ"
-        "TR" -> "tr-TR"
-        "GB" -> "en-GB"
-        "US" -> "en-US"
-        "CA" -> "en-CA"
-        "DE" -> "de-DE"
-        "FR" -> "fr-FR"
-        "ES" -> "es-ES"
-        "IT" -> "it-IT"
-        "NL" -> "nl-NL"
-        "RU" -> "ru-RU"
-        "IN" -> "hi-IN"
-        "JP" -> "ja-JP"
-        "KR" -> "ko-KR"
-        "BR" -> "pt-BR"
-        "CN" -> "zh-CN"
-        else -> java.util.Locale.getDefault().toLanguageTag()
-    }
+    val suggestedLanguage: String get() = BrowserEnvironment.proxyAcceptLanguages(countryCode).substringBefore(',')
 }
 
 /** Queries IP geolocation over the configured upstream proxy only; never falls back to a direct socket. */
@@ -325,7 +299,7 @@ internal object ProxyGeoProbe {
             tls.close()
             val json = JSONObject(body)
             if (!json.optBoolean("success", false)) throw IllegalStateException(json.optString("message").ifBlank { "تعذر تحديد موقع البروكسي." })
-            val timezone = json.optJSONObject("timezone")?.optString("id").orEmpty()
+            val timezone = BrowserEnvironment.normalizeTimeZone(json.optJSONObject("timezone")?.optString("id").orEmpty()).orEmpty()
             val latitude = json.optDouble("latitude", Double.NaN)
             val longitude = json.optDouble("longitude", Double.NaN)
             if (timezone.isBlank() || !latitude.isFinite() || !longitude.isFinite()) throw IllegalStateException("لم تُرجع خدمة تحديد الموقع بيانات كافية لهذا البروكسي.")

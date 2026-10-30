@@ -5,6 +5,9 @@ import java.util.Locale
 
 /** Validates profile values before they are passed to Gecko or a content script. */
 internal object BrowserEnvironment {
+    const val PRIVACY_TIME_ZONE = "UTC"
+    const val FINGERPRINTING_TIME_ZONE_TARGET = "+JSDateTimeUTC"
+
     private val languageTagPattern = Regex("^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
 
     /** Returns a canonical comma-separated BCP 47 list, or null for malformed input. */
@@ -20,6 +23,40 @@ internal object BrowserEnvironment {
         }.distinct()
 
         return normalized.takeIf { it.isNotEmpty() }?.joinToString(",")
+    }
+
+    /** Uses only profile-selected languages; never appends Android's locale implicitly. */
+    fun requestedLocales(value: String): Array<String> =
+        normalizeAcceptLanguages(value)?.split(',')?.toTypedArray() ?: arrayOf("en-US")
+
+    /** Proxy locale comes from the exit country, never from saved or current device locales. */
+    fun proxyAcceptLanguages(countryCode: String): String {
+        val primary = when (countryCode.uppercase()) {
+            "SY" -> "ar-SY"
+            "SA" -> "ar-SA"
+            "AE" -> "ar-AE"
+            "EG" -> "ar-EG"
+            "JO" -> "ar-JO"
+            "LB" -> "ar-LB"
+            "IQ" -> "ar-IQ"
+            "TR" -> "tr-TR"
+            "GB" -> "en-GB"
+            "US" -> "en-US"
+            "CA" -> "en-CA"
+            "DE" -> "de-DE"
+            "FR" -> "fr-FR"
+            "ES" -> "es-ES"
+            "IT" -> "it-IT"
+            "NL" -> "nl-NL"
+            "RU" -> "ru-RU"
+            "IN" -> "hi-IN"
+            "JP" -> "ja-JP"
+            "KR" -> "ko-KR"
+            "BR" -> "pt-BR"
+            "CN" -> "zh-CN"
+            else -> "en-US"
+        }
+        return listOf(primary, "en-US").distinct().joinToString(",")
     }
 
     /** Returns a valid IANA/Java zone ID without silently falling back to GMT. */

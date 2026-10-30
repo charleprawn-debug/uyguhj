@@ -92,7 +92,9 @@ Advanced mode also offers **“تعديل لغة الهاتف بما يناسب 
 
 ## GeckoView fingerprinting protection
 
-KUN Browser enables GeckoView's built-in fingerprinting protections for regular and private tabs, together with baseline protection. The selected profile's validated language list is supplied through Gecko's locale and `intl.accept_languages` settings; its IANA timezone is validated before the profile opens. These settings do not change Android's system locale or timezone.
+KUN Browser enables GeckoView's built-in fingerprinting protections for regular and private tabs, together with baseline protection. It adds Gecko's `JSDateTimeUTC` fingerprinting target so JavaScript date/timezone APIs use UTC. This is intentionally a stable privacy timezone, not the proxy's IANA timezone; Android's system timezone is not changed. The old page-injected Date/Intl patch is removed so pages do not receive a partial, inconsistent override.
+
+For proxy profiles, the browser derives its automatic language from the proxy exit country and uses `en-US` as a fixed fallback. It never appends the Android device locale automatically. Gecko receives the same ordered locale list through both runtime locales and `intl.accept_languages`; custom profile languages remain user-controlled. This removes the device-language fallback but does not make a proxy IP itself anonymous or prevent every possible browser fingerprint.
 
 The browser keeps GeckoView's native Android User-Agent and platform values rather than substituting a hand-written Firefox version. It does not fabricate `navigator.deviceMemory` or force a chosen core count; unsupported values remain unsupported, while Gecko applies its own protection to fingerprinting-sensitive APIs. Canvas readback protection is delegated to Gecko instead of adding custom pixel mutations. KUN Browser does not inject jitter into DOM client rectangles because changing layout measurements can break page rendering and interaction. Fingerprinting protection may affect site compatibility; this build does not add a per-site bypass control.
 

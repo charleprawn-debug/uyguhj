@@ -72,14 +72,11 @@ import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebExtension
 import org.mozilla.geckoview.WebRequestError
 import java.io.File
-import java.util.Locale
-import java.util.TimeZone
 import java.util.UUID
 
 private const val EXTRA_PROXY_MODE = "kun.browser.proxy_mode"
 private const val EXTRA_LOCAL_PORT = "kun.browser.local_port"
 private const val EXTRA_LANGUAGE = "kun.browser.language"
-private const val EXTRA_TIME_ZONE = "kun.browser.time_zone"
 private const val EXTRA_PROXY_PROTOCOL = "kun.browser.proxy_protocol"
 private const val EXTRA_PROXY_HOST = "kun.browser.proxy_host"
 private const val EXTRA_PROXY_USERNAME = "kun.browser.proxy_username"
@@ -101,7 +98,6 @@ internal data class BrowserLaunchConfig(
     val proxyUsername: String,
     val proxyPassword: String,
     val language: String,
-    val timeZone: String,
     val profileName: String,
     val profileId: String,
     val locationMode: String,
@@ -113,7 +109,7 @@ internal data class BrowserLaunchConfig(
             (mode in setOf("vpn", "advanced") && localPort in 1024..65535) ||
             (mode == "profile" && proxyHost.isNotBlank() && localPort in 1..65535 && proxyProtocol in setOf("http", "socks5"))
 
-    fun signature(): String = "$mode|$localPort|$proxyProtocol|$proxyHost|$proxyUsername|$proxyPassword|$language|$timeZone|$profileId|$locationMode|$latitude|$longitude"
+    fun signature(): String = "$mode|$localPort|$proxyProtocol|$proxyHost|$proxyUsername|$proxyPassword|$language|$profileId|$locationMode|$latitude|$longitude"
 
     companion object {
         fun from(intent: Intent?): BrowserLaunchConfig = BrowserLaunchConfig(
@@ -124,11 +120,8 @@ internal data class BrowserLaunchConfig(
             proxyUsername = intent?.getStringExtra(EXTRA_PROXY_USERNAME).orEmpty(),
             proxyPassword = intent?.getStringExtra(EXTRA_PROXY_PASSWORD).orEmpty(),
             language = BrowserEnvironment.normalizeAcceptLanguages(
-                intent?.getStringExtra(EXTRA_LANGUAGE).orEmpty().ifBlank { Locale.getDefault().toLanguageTag() },
-            ) ?: BrowserEnvironment.normalizeAcceptLanguages(Locale.getDefault().toLanguageTag()) ?: "en-US",
-            timeZone = BrowserEnvironment.normalizeTimeZone(
-                intent?.getStringExtra(EXTRA_TIME_ZONE).orEmpty().ifBlank { TimeZone.getDefault().id },
-            ) ?: "UTC",
+                intent?.getStringExtra(EXTRA_LANGUAGE).orEmpty(),
+            ) ?: "en-US",
             profileName = intent?.getStringExtra(EXTRA_PROFILE_NAME)?.takeIf(String::isNotBlank) ?: "الافتراضي",
             profileId = intent?.getStringExtra(EXTRA_PROFILE_ID)?.takeIf(String::isNotBlank) ?: "profile-default",
             locationMode = intent?.getStringExtra(EXTRA_LOCATION_MODE).orEmpty().ifBlank { "auto" },
@@ -167,9 +160,9 @@ internal class BrowserController(private val activity: BrowserActivity) {
         private set
     var connectionLabel by mutableStateOf("افتح المتصفح من KUN بعد تشغيل الاتصال")
         private set
-    var languageLabel by mutableStateOf(Locale.getDefault().toLanguageTag())
+    var languageLabel by mutableStateOf("en-US")
         private set
-    var timeZoneLabel by mutableStateOf(TimeZone.getDefault().id)
+    var timeZoneLabel by mutableStateOf(BrowserEnvironment.PRIVACY_TIME_ZONE)
         private set
     var configError by mutableStateOf<String?>(null)
         private set
@@ -205,7 +198,7 @@ internal class BrowserController(private val activity: BrowserActivity) {
             else -> "اختر ملفًا لبدء التصفح"
         }
         languageLabel = config.language
-        timeZoneLabel = config.timeZone
+        timeZoneLabel = BrowserEnvironment.PRIVACY_TIME_ZONE
         if (config.mode in setOf("profile", "direct")) {
             activeProfileId = config.profileId
             activeProfileName = config.profileName
@@ -219,15 +212,17 @@ internal class BrowserController(private val activity: BrowserActivity) {
                     .start()
             } else 0
             val configFile = writeRuntimeConfig(config, socks5BridgePort)
-            val locale = config.language.substringBefore(',').trim().ifBlank { Locale.getDefault().toLanguageTag() }
+            val requestedLocales = BrowserEnvironment.requestedLocales(config.language)
             val settings = GeckoRuntimeSettings.Builder()
                 .configFilePath(configFile.absolutePath)
-                .locales(arrayOf(locale))
+                .locales(requestedLocales)
                 .globalPrivacyControlEnabled(true)
                 .build()
             settings.setFingerprintingProtection(true)
             settings.setFingerprintingProtectionPrivateBrowsing(true)
+            settings.setFingerprintingProtectionOverrides(BrowserEnvironment.FINGERPRINTING_TIME_ZONE_TARGET)
             settings.setBaselineFingerprintingProtection(true)
+            settings.setBaselineFingerprintingProtectionOverrides(BrowserEnvironment.FINGERPRINTING_TIME_ZONE_TARGET)
             runtime = GeckoRuntime.create(activity.applicationContext, settings)
             configError = null
             newTab(privateMode = false)
@@ -502,7 +497,6 @@ internal class BrowserController(private val activity: BrowserActivity) {
                         return GeckoResult.fromValue(
                             org.json.JSONObject()
                             .put("enabled", config.mode in setOf("profile", "direct"))
-                                .put("timeZone", config.timeZone)
                                 .put("locationMode", config.locationMode)
                                 .put("latitude", config.latitude.toDoubleOrNull() ?: org.json.JSONObject.NULL)
                                 .put("longitude", config.longitude.toDoubleOrNull() ?: org.json.JSONObject.NULL),
