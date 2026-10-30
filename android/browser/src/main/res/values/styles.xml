@@ -2,11 +2,11 @@
     <style name="KunBrowserThemeBase" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:colorAccent">#2864E8</item>
-        <item name="android:statusBarColor">#F4F7FC</item>
-        <item name="android:navigationBarColor">#F4F7FC</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#111B2B</item>
+        <item name="android:navigationBarColor">#111B2B</item>
+        <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowActionModeOverlay">true</item>
-        <item name="android:windowBackground">#F4F7FC</item>
+        <item name="android:windowBackground">#111B2B</item>
     </style>
     <style name="KunBrowserTheme" parent="@style/KunBrowserThemeBase" />
 </resources>
