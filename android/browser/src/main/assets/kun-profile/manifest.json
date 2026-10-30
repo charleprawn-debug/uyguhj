@@ -1,0 +1,24 @@
+{
+  "manifest_version": 2,
+  "name": "KUN Profile Environment",
+  "version": "1.0.0",
+  "description": "Applies the selected KUN Browser profile settings inside web pages.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "kun-profile-environment@kun.app"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["profile.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "permissions": [
+    "nativeMessaging",
+    "nativeMessagingFromContent",
+    "geckoViewAddons"
+  ]
+}

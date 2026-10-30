@@ -4,6 +4,7 @@
         android:protectionLevel="signature" />
     <queries>
         <package android:name="com.proxyplatform.browser" />
+        <package android:name="com.proxyplatform.browser.debug" />
     </queries>
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
