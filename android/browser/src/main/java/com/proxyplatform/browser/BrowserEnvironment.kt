@@ -5,11 +5,9 @@ import java.util.Locale
 
 /** Validates profile values before they are passed to Gecko or a content script. */
 internal object BrowserEnvironment {
-    const val PRIVACY_TIME_ZONE = "UTC"
-    const val FINGERPRINTING_TIME_ZONE_TARGET = "+JSDateTimeUTC"
+    const val DEFAULT_TIME_ZONE = "UTC"
     const val FINGERPRINTING_PROTECTION_OVERRIDES =
-        FINGERPRINTING_TIME_ZONE_TARGET +
-            ",+CanvasRandomization,+CanvasExtractionFromThirdPartiesIsBlocked,+CanvasExtractionBeforeUserInputIsBlocked"
+        "+CanvasRandomization,+CanvasExtractionFromThirdPartiesIsBlocked,+CanvasExtractionBeforeUserInputIsBlocked"
 
     private val languageTagPattern = Regex("^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$")
 
@@ -70,6 +68,10 @@ internal object BrowserEnvironment {
         }
         return runCatching { ZoneId.of(candidate).id }.getOrNull()
     }
+
+    /** Uses only the IANA zone detected through the proxy; never reads Android's default zone. */
+    fun proxyTimeZone(detectedTimeZone: String): String =
+        normalizeTimeZone(detectedTimeZone) ?: DEFAULT_TIME_ZONE
 
     private const val MAX_LANGUAGE_TAGS = 6
     private const val MAX_TIME_ZONE_LENGTH = 64

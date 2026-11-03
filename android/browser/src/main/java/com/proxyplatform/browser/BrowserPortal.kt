@@ -94,6 +94,7 @@ class BrowserHomeActivity : ComponentActivity() {
         } else {
             BrowserEnvironment.proxyAcceptLanguages(profile.detectedCountryCode)
         }
+        val timeZone = if (direct) BrowserEnvironment.DEFAULT_TIME_ZONE else BrowserEnvironment.proxyTimeZone(profile.detectedTimeZone)
         val locationMode = when {
             direct && profile.locationMode == "auto" -> "off"
             profile.locationMode == "off" -> "off"
@@ -111,6 +112,7 @@ class BrowserHomeActivity : ComponentActivity() {
             putExtra("kun.browser.proxy_username", profile.username)
             putExtra("kun.browser.proxy_password", profile.password)
             putExtra("kun.browser.language", language)
+            putExtra("kun.browser.time_zone", timeZone)
             putExtra("kun.browser.location_mode", locationMode)
             putExtra("kun.browser.latitude", latitude)
             putExtra("kun.browser.longitude", longitude)
@@ -244,7 +246,7 @@ private fun BrowserPortalApp(onOpen: (BrowserProfile) -> Unit, onClearProfileDat
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("الاتصال: ${if (profile.proxyId == "direct") "مباشر بدون بروكسي" else "${profile.protocol.uppercase()} • ${profile.host}:${profile.port}"}")
                     Text("لغة الويب: ${if (profile.languageMode == "auto") BrowserEnvironment.proxyAcceptLanguages(profile.detectedCountryCode) else BrowserEnvironment.normalizeAcceptLanguages(profile.language) ?: "en-US"}")
-                    Text("منطقة وقت صفحات الويب: UTC (موحّدة للخصوصية)")
+                    Text("منطقة وقت صفحات الويب: ${if (profile.proxyId == "direct") BrowserEnvironment.DEFAULT_TIME_ZONE else BrowserEnvironment.proxyTimeZone(profile.detectedTimeZone)}")
                     Text("الموقع: ${when (profile.locationMode) { "custom" -> "مخصص (${profile.latitude}, ${profile.longitude})"; "off" -> "غير محدد"; else -> if (profile.proxyId == "direct") "إعداد الجهاز" else "تلقائي حسب عنوان خروج البروكسي" }}")
                     Text("كلمة مرور البروكسي محفوظة مشفّرة على هذا الجهاز.", style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
@@ -376,7 +378,7 @@ private fun ProfileCard(profile: BrowserProfile, onDetails: (BrowserProfile) -> 
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 InfoPill(if (profile.languageMode == "auto") BrowserEnvironment.proxyAcceptLanguages(profile.detectedCountryCode) else BrowserEnvironment.normalizeAcceptLanguages(profile.language) ?: "en-US")
-                InfoPill("التوقيت UTC")
+                InfoPill(if (profile.proxyId == "direct") "UTC" else BrowserEnvironment.proxyTimeZone(profile.detectedTimeZone))
                 InfoPill(when (profile.locationMode) { "custom" -> "موقع مخصص"; "off" -> "الموقع مغلق"; else -> if (profile.proxyId == "direct") "موقع الجهاز" else "موقع تلقائي" })
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -504,7 +506,7 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
             if (languageMode == "auto") Text(if (proxyId == "direct") "يستخدم المتصفح en-US بدلاً من قراءة لغات الهاتف." else "تُشتق اللغة من بلد خروج البروكسي، مع en-US كخيار ثابت إذا لم تتوفر بيانات البلد.", style = MaterialTheme.typography.bodySmall, color = Muted)
             if (languageMode == "custom") OutlinedTextField(value = language, onValueChange = { language = it }, modifier = Modifier.fillMaxWidth(), label = { Text("رمز اللغة") }, placeholder = { Text("ar-SA أو en-US") }, singleLine = true, shape = RoundedCornerShape(14.dp))
             SectionRule("المنطقة الزمنية")
-            Text("يعرض المتصفح UTC لكل المواقع عبر حماية Gecko الأصلية. هذا قد يختلف عن توقيت البروكسي، لكنه لا يقرأ منطقة الهاتف ولا يغيّر إعداد Android.", style = MaterialTheme.typography.bodySmall, color = Muted)
+            Text("يُمرَّر توقيت IANA المكتشف عبر البروكسي إلى بيئة Gecko لكل ملف متصفح؛ إذا لم ينجح الفحص يستخدم UTC. لا يقرأ هذا الخيار منطقة الهاتف ولا يغيّر إعداد Android.", style = MaterialTheme.typography.bodySmall, color = Muted)
             SectionRule("الموقع")
             ChoiceRow(if (proxyId == "direct") listOf("موقع مخصص" to "custom", "إيقاف" to "off") else listOf("تلقائي عبر IP" to "auto", "موقع مخصص" to "custom", "إيقاف" to "off"), locationMode) { locationMode = it }
             if (locationMode == "auto" && proxyId != "direct") Text("يُستخدم موقع IP التقريبي المكتشف عبر البروكسي. وهو لا يمثل GPS دقيقًا.", style = MaterialTheme.typography.bodySmall, color = Muted)
@@ -535,8 +537,8 @@ private fun BrowserProfileEditor(initial: BrowserProfile?, accountProxies: List<
                         username = if (direct) "" else username, password = if (direct) "" else password,
                         languageMode = languageMode,
                         language = BrowserEnvironment.normalizeAcceptLanguages(language).orEmpty(),
-                        timeZoneMode = "utc",
-                        timeZone = BrowserEnvironment.PRIVACY_TIME_ZONE,
+                        timeZoneMode = "auto",
+                        timeZone = detected?.timeZone.orEmpty(),
                         locationMode = if (direct && locationMode == "auto") "off" else locationMode, latitude = latitude.trim(), longitude = longitude.trim(),
                         detectedCountry = detected?.country.orEmpty(), detectedCountryCode = detected?.countryCode.orEmpty(),
                         detectedLocale = detected?.suggestedLanguage.orEmpty(), detectedTimeZone = detected?.timeZone.orEmpty(),

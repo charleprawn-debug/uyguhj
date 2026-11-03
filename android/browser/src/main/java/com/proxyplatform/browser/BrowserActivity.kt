@@ -77,6 +77,7 @@ import java.util.UUID
 private const val EXTRA_PROXY_MODE = "kun.browser.proxy_mode"
 private const val EXTRA_LOCAL_PORT = "kun.browser.local_port"
 private const val EXTRA_LANGUAGE = "kun.browser.language"
+private const val EXTRA_TIME_ZONE = "kun.browser.time_zone"
 private const val EXTRA_PROXY_PROTOCOL = "kun.browser.proxy_protocol"
 private const val EXTRA_PROXY_HOST = "kun.browser.proxy_host"
 private const val EXTRA_PROXY_USERNAME = "kun.browser.proxy_username"
@@ -98,6 +99,7 @@ internal data class BrowserLaunchConfig(
     val proxyUsername: String,
     val proxyPassword: String,
     val language: String,
+    val timeZone: String,
     val profileName: String,
     val profileId: String,
     val locationMode: String,
@@ -109,7 +111,7 @@ internal data class BrowserLaunchConfig(
             (mode in setOf("vpn", "advanced") && localPort in 1024..65535) ||
             (mode == "profile" && proxyHost.isNotBlank() && localPort in 1..65535 && proxyProtocol in setOf("http", "socks5"))
 
-    fun signature(): String = "$mode|$localPort|$proxyProtocol|$proxyHost|$proxyUsername|$proxyPassword|$language|$profileId|$locationMode|$latitude|$longitude"
+    fun signature(): String = "$mode|$localPort|$proxyProtocol|$proxyHost|$proxyUsername|$proxyPassword|$language|$timeZone|$profileId|$locationMode|$latitude|$longitude"
 
     companion object {
         fun from(intent: Intent?): BrowserLaunchConfig = BrowserLaunchConfig(
@@ -122,6 +124,7 @@ internal data class BrowserLaunchConfig(
             language = BrowserEnvironment.normalizeAcceptLanguages(
                 intent?.getStringExtra(EXTRA_LANGUAGE).orEmpty(),
             ) ?: "en-US",
+            timeZone = BrowserEnvironment.proxyTimeZone(intent?.getStringExtra(EXTRA_TIME_ZONE).orEmpty()),
             profileName = intent?.getStringExtra(EXTRA_PROFILE_NAME)?.takeIf(String::isNotBlank) ?: "الافتراضي",
             profileId = intent?.getStringExtra(EXTRA_PROFILE_ID)?.takeIf(String::isNotBlank) ?: "profile-default",
             locationMode = intent?.getStringExtra(EXTRA_LOCATION_MODE).orEmpty().ifBlank { "auto" },
@@ -162,7 +165,7 @@ internal class BrowserController(private val activity: BrowserActivity) {
         private set
     var languageLabel by mutableStateOf("en-US")
         private set
-    var timeZoneLabel by mutableStateOf(BrowserEnvironment.PRIVACY_TIME_ZONE)
+    var timeZoneLabel by mutableStateOf(BrowserEnvironment.DEFAULT_TIME_ZONE)
         private set
     var configError by mutableStateOf<String?>(null)
         private set
@@ -198,7 +201,7 @@ internal class BrowserController(private val activity: BrowserActivity) {
             else -> "اختر ملفًا لبدء التصفح"
         }
         languageLabel = config.language
-        timeZoneLabel = BrowserEnvironment.PRIVACY_TIME_ZONE
+        timeZoneLabel = config.timeZone
         if (config.mode in setOf("profile", "direct")) {
             activeProfileId = config.profileId
             activeProfileName = config.profileName
@@ -595,8 +598,12 @@ internal class BrowserController(private val activity: BrowserActivity) {
                 "media.peerconnection.ice.proxy_only: true",
             )
         }
+        val safeTimeZone = BrowserEnvironment.proxyTimeZone(config.timeZone)
+        // GeckoView applies this environment map to its runtime; never call Android's TimeZone.setDefault().
         val yaml = (
             listOf(
+                "env:",
+                "  TZ: ${yamlString(safeTimeZone)}",
                 "prefs:",
                 "  intl.accept_languages: ${yamlString(safeLanguage)}",
                 "  privacy.firstparty.isolate: true",

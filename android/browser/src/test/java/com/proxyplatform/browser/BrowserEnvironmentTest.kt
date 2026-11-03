@@ -31,8 +31,6 @@ class BrowserEnvironmentTest {
     fun requestedLocalesPreservesOnlyConfiguredTags() {
         assertEquals(listOf("en-CA", "en-US"), BrowserEnvironment.requestedLocales("en-CA,en-US").toList())
         assertEquals(listOf("en-US"), BrowserEnvironment.requestedLocales("malformed tag").toList())
-        assertEquals("UTC", BrowserEnvironment.PRIVACY_TIME_ZONE)
-        assertEquals("+JSDateTimeUTC", BrowserEnvironment.FINGERPRINTING_TIME_ZONE_TARGET)
     }
 
     @Test
@@ -46,5 +44,12 @@ class BrowserEnvironmentTest {
         assertNull(BrowserEnvironment.normalizeTimeZone("America/NotARealCity"))
         assertNull(BrowserEnvironment.normalizeTimeZone("America/\nToronto"))
         assertNull(BrowserEnvironment.normalizeTimeZone(""))
+    }
+
+    @Test
+    fun proxyTimeZoneUsesOnlyValidatedProxyZoneAndFallsBackToUtc() {
+        assertEquals("America/Toronto", BrowserEnvironment.proxyTimeZone("America/Toronto"))
+        assertEquals("UTC", BrowserEnvironment.proxyTimeZone("not/a-zone"))
+        assertEquals("UTC", BrowserEnvironment.proxyTimeZone(""))
     }
 }
