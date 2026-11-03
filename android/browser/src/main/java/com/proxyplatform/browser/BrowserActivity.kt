@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.LocaleList
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -230,7 +231,7 @@ internal class BrowserController(private val activity: BrowserActivity) {
             settings.setBaselineFingerprintingProtectionOverrides(
                 BrowserEnvironment.FINGERPRINTING_PROTECTION_OVERRIDES,
             )
-            runtime = GeckoRuntime.create(activity.applicationContext, settings)
+            runtime = createRuntimeWithProfileLocales(settings, requestedLocales)
             configError = null
             newTab(privateMode = false)
         } catch (failure: Exception) {
@@ -611,6 +612,27 @@ internal class BrowserController(private val activity: BrowserActivity) {
         ).joinToString("\n", postfix = "\n")
         file.writeText(yaml)
         return file
+    }
+
+    /**
+     * GeckoView appends LocaleList.getDefault() to requested locales when it computes
+     * Accept-Language. Scope that process default to this profile while Gecko commits settings,
+     * then restore Android's original app-process locale list immediately.
+     */
+    private fun createRuntimeWithProfileLocales(
+        settings: GeckoRuntimeSettings,
+        requestedLocales: Array<String>,
+    ): GeckoRuntime {
+        val originalLocales = LocaleList.getDefault()
+        val originalLocale = java.util.Locale.getDefault()
+        val profileLocales = LocaleList.forLanguageTags(requestedLocales.joinToString(","))
+        return try {
+            LocaleList.setDefault(profileLocales)
+            GeckoRuntime.create(activity.applicationContext, settings)
+        } finally {
+            LocaleList.setDefault(originalLocales)
+            java.util.Locale.setDefault(originalLocale)
+        }
     }
 
     private fun yamlString(value: String): String = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", " ")}\""
